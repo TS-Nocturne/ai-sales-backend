@@ -1,0 +1,58 @@
+# Virtual environments (re-installed during build)
+.venv
+venv
+env
+
+# Git
+.git
+.gitignore
+
+# Environment / secrets — NEVER bake into the image
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build
+dist
+*.egg-info
+.eggs
+
+# LangGraph checkpoint DB (runtime data — mount as volume)
+checkpoints.sqlite
+checkpoints.sqlite-*
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+tests
+test_*.py
+test-out.txt
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation (not needed at runtime)
+.cursorrules
+README.md
+DEPLOYMENT.md
+AGENTS.md
+
+# Uploaded documents (dev data)
+documents
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scripts (dev only)
+scripts

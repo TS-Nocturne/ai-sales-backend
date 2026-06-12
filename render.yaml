@@ -1,0 +1,30 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ai-sales-brain
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health/ready
+    envVars:
+      - key: ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: BRAIN_API_KEY
+        sync: false
+      - key: INTERNAL_API_KEY
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CATALOG_API_URL
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: INDEX_NAME
+        value: ai-sale
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DATABASE_POOL_MAX_SIZE
+        value: "5"
