@@ -6,6 +6,7 @@ Follows AGENTS.md guidelines:
 - Always write a descriptive docstring so the LLM understands its exact purpose.
 """
 
+import logging
 from typing import Annotated, Optional
 
 import re
@@ -22,6 +23,19 @@ from ai_sales.payments import qr as payment_qr
 from ai_sales.payments import slip2go
 from ai_sales.tools.catalog import get_product_catalog
 from ai_sales.tools.order_total import resolve_order_from_messages
+
+logger = logging.getLogger(__name__)
+
+_CATALOG_FALLBACK_LIMIT = 3
+
+_BROAD_BROWSE_QUERIES = frozenset(
+    {
+        "สินค้าแนะนำ",
+        "สินค้าทั้งหมด",
+        "สินค้ายอดนิยม",
+        "อุปกรณ์เสริมมือถือ",
+    }
+)
 
 
 class SearchKnowledgeBaseInput(BaseModel):
@@ -236,6 +250,44 @@ def _normalize_search_query(query: str) -> str:
     return q
 
 
+def _is_broad_browse_query(query: str) -> bool:
+    """True when the query is a vague browse intent (not a specific product lookup)."""
+    normalized = _normalize_search_query((query or "").strip())
+    compact = re.sub(r"\s+", "", normalized.lower())
+    return any(
+        re.sub(r"\s+", "", key.lower()) == compact for key in _BROAD_BROWSE_QUERIES
+    )
+
+
+def _catalog_browse_fallback(
+    max_price: float | None = None, limit: int = _CATALOG_FALLBACK_LIMIT
+) -> list[dict]:
+    """Return in-stock catalog items when vector/keyword search has nothing for browse queries."""
+    catalog = get_product_catalog()
+    picks: list[dict] = []
+
+    def _append(product: dict) -> None:
+        if len(picks) >= limit:
+            return
+        price = float(product.get("price", 0) or 0)
+        if max_price and max_price > 0 and price > max_price:
+            return
+        meta = product.copy()
+        meta["source_type"] = "product"
+        meta["score"] = 1.0
+        picks.append(meta)
+
+    for product in catalog:
+        if int(product.get("stock", 0) or 0) > 0:
+            _append(product)
+
+    if not picks:
+        for product in catalog:
+            _append(product)
+
+    return picks
+
+
 def _filter_results_by_max_price(
     results: list[dict], max_price: float | None
 ) -> list[dict]:
@@ -335,7 +387,9 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
         query="สายชาร์จ 30000" หรือ query="รุ่น" หรือ query="แนะนำหน่อย"
 
     For open-ended browse with no category, use query="สินค้าแนะนำ" or
-    call list_products() with empty filters.
+    call list_products() with empty filters. If vector search finds nothing for
+    a broad browse query, the tool automatically shows up to 3 in-stock items
+    from the live catalog (Catalog Fallback).
 
     Returns:
         A formatted string listing relevant products and/or FAQ excerpts.
@@ -345,11 +399,21 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     if max_price and max_price > 0:
         budget_note = f" (งบไม่เกิน {max_price:,.0f} บาท)"
 
+    logger.info(
+        "search_knowledge_base start query=%r max_price=%s broad=%s",
+        query,
+        max_price,
+        _is_broad_browse_query(query),
+    )
+
     pinecone_results = _search_pinecone(query)
 
     if pinecone_results:
         pinecone_results = _filter_results_by_max_price(pinecone_results, max_price)
         if pinecone_results:
+            logger.info(
+                "search_knowledge_base hit vector count=%s", len(pinecone_results)
+            )
             header = (
                 f"[Vector Search] Found {len(pinecone_results)} result(s) "
                 f"matching '{query}'{budget_note}:\n\n"
@@ -360,12 +424,31 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     memory_results = _filter_results_by_max_price(memory_results, max_price)
 
     if memory_results:
+        logger.info(
+            "search_knowledge_base hit keyword count=%s", len(memory_results)
+        )
         header = (
             f"[Keyword Fallback] Found {len(memory_results)} product(s) "
             f"matching '{query}'{budget_note} (FAQ not available offline):\n\n"
         )
         return header + _format_search_results(memory_results)
 
+    if _is_broad_browse_query(query):
+        fallback = _catalog_browse_fallback(max_price)
+        if fallback:
+            logger.info(
+                "search_knowledge_base catalog fallback count=%s query=%r",
+                len(fallback),
+                query,
+            )
+            header = (
+                f"[Catalog Fallback] Showing {len(fallback)} in-stock item(s) "
+                f"for broad browse '{query}'{budget_note} "
+                "(vector search had no match — using live catalog):\n\n"
+            )
+            return header + _format_search_results(fallback)
+
+    logger.info("search_knowledge_base miss query=%r max_price=%s", query, max_price)
     if max_price and max_price > 0:
         return (
             f"No relevant information found for '{query}' within budget "

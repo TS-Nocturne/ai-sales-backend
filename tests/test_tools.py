@@ -65,6 +65,33 @@ def test_list_products_budget_ceiling_not_exact_price():
     assert "บาท" in result
 
 
+def test_search_knowledge_base_broad_browse_catalog_fallback(monkeypatch):
+    import ai_sales.tools.sales_tools as sales_tools
+
+    monkeypatch.setattr(sales_tools, "_search_pinecone", lambda query, top_k=5: None)
+    monkeypatch.setattr(sales_tools, "_search_in_memory", lambda query: [])
+    result = search_knowledge_base.invoke({"query": "สินค้าแนะนำ"})
+    assert "[Catalog Fallback]" in result
+    assert "No relevant information found" not in result
+    assert "Product]" in result or "P001" in result
+
+
+def test_catalog_browse_fallback_respects_max_price():
+    import ai_sales.tools.sales_tools as sales_tools
+
+    picks = sales_tools._catalog_browse_fallback(max_price=400, limit=10)
+    assert picks
+    assert all(float(p.get("price", 0)) <= 400 for p in picks)
+
+
+def test_is_broad_browse_query():
+    import ai_sales.tools.sales_tools as sales_tools
+
+    assert sales_tools._is_broad_browse_query("สินค้าแนะนำ")
+    assert sales_tools._is_broad_browse_query("แนะนำสินค้าให้หน่อย")
+    assert not sales_tools._is_broad_browse_query("เคส iPhone 15")
+
+
 def test_calculate_discount_valid():
     result = calculate_discount.invoke(
         {
