@@ -174,12 +174,35 @@ def search_knowledge_base(query: str) -> str:
     """Search the knowledge base for products, pricing, features, or FAQ answers.
 
     Use this tool when the customer asks about available products, pricing,
-    policies, shipping, warranties, returns, or any general questions. 
-    The search uses semantic matching to find both products and FAQ answers.
+    policies, shipping, warranties, returns, or any general questions.
+    The search uses semantic vector matching — `query` must be short, concrete
+    product/FAQ keywords, NOT the customer's raw sentence.
+
+    CRITICAL — extract keywords before calling:
+    Rewrite the customer's message into search keywords before passing `query`.
+    Strip polite fillers and meta-requests (แนะนำ, ช่วยหา, มีไหม, ให้หน่อย,
+    บ้างครับ, etc.) and keep only product names, phone models, categories, or
+    policy topics. Never pass a full conversational phrase as-is.
+
+    Examples (customer message → correct `query`):
+        "แนะนำสินค้าให้หน่อย"   → "สินค้ายอดนิยม" or "เคส ฟิล์ม สายชาร์จ"
+        "มีอะไรขายบ้างครับ"     → "อุปกรณ์เสริมมือถือ" (or use list_products)
+        "อยากได้เคสไอโฟน"        → "เคส iPhone"
+        "เคส iPhone 15 มีไหม"   → "เคส iPhone 15"
+        "ช่วยหาหูฟังให้หน่อย"   → "หูฟัง"
+        "นโยบายการคืนเงิน"      → "นโยบายคืนเงิน"
+        "สายชาร์จเร็วมีไหม"     → "สายชาร์จเร็ว"
+
+    Wrong — never pass these as `query`:
+        "แนะนำสินค้าให้หน่อย", "มีอะไรแนะนำบ้าง", "ช่วยค้นหาให้หน่อย"
+
+    For open-ended "recommend something" with no specific category, search with
+    a broad catalog keyword such as "สินค้าแนะนำ" or "อุปกรณ์เสริมมือถือ", or
+    call list_products() with empty filters to browse the full catalog.
 
     Args:
-        query: A natural language question or keywords to search for 
-               (e.g., "เคส iPhone 15 มีไหม", "นโยบายการคืนเงิน", "สายชาร์จเร็ว").
+        query: Short extracted keywords for vector search (product name, model,
+            category, or policy topic). Ideally 2–6 words. Thai or English.
 
     Returns:
         A formatted string listing relevant products and/or FAQ excerpts.
