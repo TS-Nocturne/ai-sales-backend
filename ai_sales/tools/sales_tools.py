@@ -37,6 +37,12 @@ _BROAD_BROWSE_QUERIES = frozenset(
     }
 )
 
+_BROAD_BROWSE_RE = re.compile(
+    r"มี(?:อะไร|สินค้า).*(?:ขาย|บ้าง)|มีอะไรขาย|ขายอะไร|"
+    r"แนะนำ(?:สินค้า)?.*(?:หน่อย|บ้าง)|ซื้ออะไรได้|มีรุ่น(?:ไหน|ใหน)",
+    re.IGNORECASE,
+)
+
 
 class SearchKnowledgeBaseInput(BaseModel):
     """Structured args so the LLM separates product keywords from budget ceiling."""
@@ -250,13 +256,41 @@ def _normalize_search_query(query: str) -> str:
     return q
 
 
-def _is_broad_browse_query(query: str) -> bool:
+def _is_broad_browse_query(query: str, *, raw_query: str | None = None) -> bool:
     """True when the query is a vague browse intent (not a specific product lookup)."""
-    normalized = _normalize_search_query((query or "").strip())
-    compact = re.sub(r"\s+", "", normalized.lower())
-    return any(
-        re.sub(r"\s+", "", key.lower()) == compact for key in _BROAD_BROWSE_QUERIES
+    for candidate in (raw_query, query):
+        if not candidate or not str(candidate).strip():
+            continue
+        text = str(candidate).strip()
+        if _BROAD_BROWSE_RE.search(text):
+            return True
+        normalized = _normalize_search_query(text)
+        compact = re.sub(r"\s+", "", normalized.lower())
+        if any(
+            re.sub(r"\s+", "", key.lower()) == compact for key in _BROAD_BROWSE_QUERIES
+        ):
+            return True
+    return False
+
+
+def _product_hits(results: list[dict]) -> list[dict]:
+    """Keep only product rows from a mixed vector/FAQ result set."""
+    return [r for r in results if r.get("source_type") == "product"]
+
+
+def _format_catalog_fallback_response(
+    picks: list[dict],
+    query: str,
+    budget_note: str = "",
+    *,
+    tag: str = "Catalog Fallback",
+) -> str:
+    header = (
+        f"[{tag}] Showing {len(picks)} in-stock item(s) "
+        f"for broad browse '{query}'{budget_note} "
+        "(vector/keyword had no product match — using live catalog):\n\n"
     )
+    return header + _format_search_results(picks)
 
 
 def _catalog_browse_fallback(
@@ -394,25 +428,39 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     Returns:
         A formatted string listing relevant products and/or FAQ excerpts.
     """
+    raw_query = query
     query = _normalize_search_query(query)
     budget_note = ""
+    budget_cap: float | None = None
     if max_price and max_price > 0:
         budget_note = f" (งบไม่เกิน {max_price:,.0f} บาท)"
+        budget_cap = max_price
 
+    broad = _is_broad_browse_query(query, raw_query=raw_query)
     logger.info(
-        "search_knowledge_base start query=%r max_price=%s broad=%s",
+        "search_knowledge_base start raw=%r query=%r max_price=%s broad=%s",
+        raw_query,
         query,
         max_price,
-        _is_broad_browse_query(query),
+        broad,
     )
 
     pinecone_results = _search_pinecone(query)
 
     if pinecone_results:
-        pinecone_results = _filter_results_by_max_price(pinecone_results, max_price)
-        if pinecone_results:
+        pinecone_results = _filter_results_by_max_price(pinecone_results, budget_cap)
+        products = _product_hits(pinecone_results)
+        if products:
+            logger.info("search_knowledge_base hit vector products=%s", len(products))
+            header = (
+                f"[Vector Search] Found {len(products)} result(s) "
+                f"matching '{query}'{budget_note}:\n\n"
+            )
+            return header + _format_search_results(products)
+        if not broad and pinecone_results:
             logger.info(
-                "search_knowledge_base hit vector count=%s", len(pinecone_results)
+                "search_knowledge_base hit vector non-product count=%s",
+                len(pinecone_results),
             )
             header = (
                 f"[Vector Search] Found {len(pinecone_results)} result(s) "
@@ -421,7 +469,7 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
             return header + _format_search_results(pinecone_results)
 
     memory_results = _search_in_memory(query)
-    memory_results = _filter_results_by_max_price(memory_results, max_price)
+    memory_results = _filter_results_by_max_price(memory_results, budget_cap)
 
     if memory_results:
         logger.info(
@@ -433,20 +481,15 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
         )
         return header + _format_search_results(memory_results)
 
-    if _is_broad_browse_query(query):
-        fallback = _catalog_browse_fallback(max_price)
+    if broad:
+        fallback = _catalog_browse_fallback(budget_cap)
         if fallback:
             logger.info(
                 "search_knowledge_base catalog fallback count=%s query=%r",
                 len(fallback),
                 query,
             )
-            header = (
-                f"[Catalog Fallback] Showing {len(fallback)} in-stock item(s) "
-                f"for broad browse '{query}'{budget_note} "
-                "(vector search had no match — using live catalog):\n\n"
-            )
-            return header + _format_search_results(fallback)
+            return _format_catalog_fallback_response(fallback, query, budget_note)
 
     logger.info("search_knowledge_base miss query=%r max_price=%s", query, max_price)
     if max_price and max_price > 0:
@@ -555,6 +598,31 @@ def list_products(
         matches.append(product)
 
     if not matches:
+        if not cat and not kw:
+            fallback = _catalog_browse_fallback(
+                max_price if max_price > 0 else None
+            )
+            if fallback:
+                logger.info(
+                    "list_products catalog fallback count=%s cat=%r kw=%r",
+                    len(fallback),
+                    category,
+                    keyword,
+                )
+                lines = [
+                    "[Catalog Fallback] แสดงสินค้าแนะนำจากคลังสด "
+                    f"({len(fallback)} รายการ — vector/keyword ไม่ตรง):"
+                ]
+                for p in fallback:
+                    in_stock = (
+                        "มีสินค้า" if int(p.get("stock", 0)) > 0 else "สินค้าหมด"
+                    )
+                    lines.append(
+                        f"- {p.get('name', 'N/A')} | ราคา {float(p.get('price', 0)):.0f} บาท "
+                        f"| หมวด: {p.get('category', 'N/A')} | {in_stock}\n"
+                        f"  รายละเอียด: {p.get('description', 'N/A')}"
+                    )
+                return "\n".join(lines)
         return (
             "[Catalog] ไม่พบสินค้าที่ตรงกับเงื่อนไขนี้ในร้าน "
             f"(category='{category}', keyword='{keyword}', "

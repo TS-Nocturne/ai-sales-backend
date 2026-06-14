@@ -10,7 +10,11 @@ from __future__ import annotations
 import re
 
 from ai_sales.tools.catalog import get_product_catalog
-from ai_sales.tools.sales_tools import _search_in_memory
+from ai_sales.tools.sales_tools import (
+    _catalog_browse_fallback,
+    _is_broad_browse_query,
+    _search_in_memory,
+)
 
 # Customer turns that likely need product facts (Thai + common English).
 _PRODUCT_INTENT = re.compile(
@@ -159,6 +163,12 @@ def build_catalog_prefetch(message: str, conversation_summary: str = "") -> str:
 
     results = _resolve_prefetch_results(message, summary)
     catalog_size = len(get_product_catalog())
+    if not results and catalog_size > 0:
+        if _is_broad_browse_query(message):
+            results = [
+                {k: v for k, v in p.items() if k not in ("source_type", "score")}
+                for p in _catalog_browse_fallback(limit=20)
+            ]
     if not results:
         return (
             "[ข้อมูลสินค้าจากระบบ ณ เวลานี้ — อ้างอิงเท่านี้เท่านั้น ห้ามเดา]\n"

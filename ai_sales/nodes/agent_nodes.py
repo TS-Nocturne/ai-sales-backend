@@ -192,7 +192,7 @@ def _browse_already_satisfied(messages: list) -> bool:
     for msg in messages[last_human_idx:]:
         if isinstance(msg, ToolMessage):
             text = _normalize_message_text(msg.content)
-            if "[Catalog]" in text or "[Vector Search]" in text:
+            if "[Catalog]" in text or "[Vector Search]" in text or "[Catalog Fallback]" in text:
                 return True
     return False
 

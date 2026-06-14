@@ -89,7 +89,32 @@ def test_is_broad_browse_query():
 
     assert sales_tools._is_broad_browse_query("สินค้าแนะนำ")
     assert sales_tools._is_broad_browse_query("แนะนำสินค้าให้หน่อย")
+    assert sales_tools._is_broad_browse_query("มีอะไรขายบ้างครับ")
     assert not sales_tools._is_broad_browse_query("เคส iPhone 15")
+
+
+def test_list_products_open_browse_catalog_fallback(monkeypatch):
+    import ai_sales.tools.sales_tools as sales_tools
+
+    monkeypatch.setattr(sales_tools, "get_product_catalog", lambda: [])
+    monkeypatch.setattr(
+        sales_tools,
+        "_catalog_browse_fallback",
+        lambda max_price=None, limit=3: [
+            {
+                "name": "สายชาร์จทดสอบ",
+                "price": 350,
+                "category": "Cable",
+                "stock": 10,
+                "description": "ทดสอบ",
+            }
+        ],
+    )
+    result = list_products.invoke(
+        {"category": "", "keyword": "", "min_price": 0, "max_price": 0, "sort_by_price": ""}
+    )
+    assert "[Catalog Fallback]" in result
+    assert "สายชาร์จทดสอบ" in result
 
 
 def test_calculate_discount_valid():

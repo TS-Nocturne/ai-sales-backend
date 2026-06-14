@@ -31,5 +31,10 @@ def test_should_auto_browse_catalog():
     assert not _should_auto_browse_catalog("สนใจต้องทำยังไง")
 
 
+def test_is_broad_browse_query():
+    assert _looks_like_broad_catalog_query("มีอะไรขายบ้างครับ")
+    assert _should_auto_browse_catalog("มีอะไรขายบ้างครับ")
+
+
 def test_broad_catalog_skips_specific_product():
     assert not _looks_like_broad_catalog_query("เคส iPhone 15 มีไหม")
