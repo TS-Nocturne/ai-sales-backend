@@ -6,7 +6,7 @@ Follows AGENTS.md guidelines:
 - Always write a descriptive docstring so the LLM understands its exact purpose.
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 import re
 
@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
+from pydantic import BaseModel, Field
 
 from ai_sales.consts import MAX_DISCOUNT_PERCENT
 from ai_sales.channels import line_delivery
@@ -21,6 +22,68 @@ from ai_sales.payments import qr as payment_qr
 from ai_sales.payments import slip2go
 from ai_sales.tools.catalog import get_product_catalog
 from ai_sales.tools.order_total import resolve_order_from_messages
+
+
+class SearchKnowledgeBaseInput(BaseModel):
+    """Structured args so the LLM separates product keywords from budget ceiling."""
+
+    query: str = Field(
+        description=(
+            "ชื่อ ประเภท รุ่น หรือหัวข้อที่ต้องการค้นหา "
+            "(เช่น 'สายชาร์จ', 'เคส iPhone 15', 'นโยบายคืนเงิน') "
+            "ห้ามใส่ตัวเลขราคา/งบประมาณในช่องนี้"
+        )
+    )
+    max_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "งบประมาณสูงสุดของลูกค้า (ราคาไม่เกิน) เป็นบาท — "
+            "ใส่เมื่อลูกค้าบอกงบ เช่น 30000 หรือ 'ในงบ 3000' "
+            "ไม่ใช่ราคาเป๊ะๆ สายชาร์จ 350 บาทอยู่ในงบ 30000 ได้"
+        ),
+    )
+
+
+class ListProductsInput(BaseModel):
+    """Structured args for exact catalog filtering — budget goes in max_price only."""
+
+    category: str = Field(
+        default="",
+        description=(
+            "หมวดสินค้า เช่น 'เคส', 'สายชาร์จ', 'หูฟัง' — "
+            "ว่างถ้าต้องการดูทั้งร้าน"
+        ),
+    )
+    keyword: str = Field(
+        default="",
+        description="คีย์เวิร์ดเพิ่มในชื่อ/รายละเอียด เช่น 'iPhone 15' — ว่างถ้าไม่กรอง",
+    )
+    min_price: float = Field(
+        default=0,
+        description=(
+            "ราคาขั้นต่ำ (บาท) — ใช้เฉพาะเมื่อลูกค้าขอของราคาตั้งแต่ X ขึ้นไป "
+            "ห้ามใส่งบประมาณตรงนี้"
+        ),
+    )
+    max_price: float = Field(
+        default=0,
+        description=(
+            "งบประมาณสูงสุด (ราคาไม่เกิน) เป็นบาท — "
+            "ใส่เมื่อลูกค้าบอกงบ เช่น 3000 หรือ 30000"
+        ),
+    )
+    sort_by_price: str = Field(
+        default="",
+        description="'desc' = แพงสุดก่อน, 'asc' = ถูกสุดก่อน, ว่าง = ลำดับในคลัง",
+    )
+
+
+class CalculateDiscountInput(BaseModel):
+    product_name: str = Field(description="ชื่อสินค้าที่กำลังให้ส่วนลด")
+    original_price: float = Field(description="ราคาปกติก่อนหักส่วนลด (บาท)")
+    discount_percent: float = Field(
+        description="เปอร์เซ็นต์ส่วนลด (0–100) ส่วนลดเกิน 15% ต้องรอผู้จัดการ"
+    )
 
 
 def transfer_payment_qr_update(state: dict) -> dict:
@@ -173,6 +236,22 @@ def _normalize_search_query(query: str) -> str:
     return q
 
 
+def _filter_results_by_max_price(
+    results: list[dict], max_price: float | None
+) -> list[dict]:
+    """Keep products at or below max_price; non-product hits (FAQ) pass through."""
+    if not max_price or max_price <= 0:
+        return results
+    filtered: list[dict] = []
+    for item in results:
+        if item.get("source_type") == "product":
+            price = float(item.get("price", 0) or 0)
+            if price > max_price:
+                continue
+        filtered.append(item)
+    return filtered
+
+
 def _search_in_memory(query: str) -> list[dict]:
     """Fallback: keyword search against the in-memory product catalog only."""
     query_lower = query.lower().strip()
@@ -230,75 +309,75 @@ def _format_search_results(results: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-@tool
-def search_knowledge_base(query: str) -> str:
+@tool(args_schema=SearchKnowledgeBaseInput)
+def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     """Search the knowledge base for products, pricing, features, or FAQ answers.
 
     Use this tool when the customer asks about available products, pricing,
     policies, shipping, warranties, returns, or any general questions.
-    The search uses semantic vector matching — `query` must be short, concrete
-    product/FAQ keywords, NOT the customer's raw sentence.
+    Pass product/category keywords in `query` and budget (if any) in `max_price`
+    — never combine them into one string like "สายชาร์จ 30000".
 
     CRITICAL — extract keywords before calling:
     Rewrite the customer's message into search keywords before passing `query`.
     Strip polite fillers and meta-requests (แนะนำ, ช่วยหา, มีไหม, ให้หน่อย,
     บ้างครับ, etc.) and keep only product names, phone models, categories, or
-    policy topics. Never pass a full conversational phrase as-is.
+    policy topics. Put budget figures only in `max_price`.
 
-    Examples (customer message → correct `query`):
-        "แนะนำสินค้าให้หน่อย"   → "สินค้าแนะนำ"
-        "มีรุ่นไหนแนะนำบ้าง"    → "สินค้าแนะนำ" (ห้ามส่งแค่ "รุ่น")
-        "มีรุ่นใหนแนะนำบ้าง"    → "สินค้าแนะนำ"
-        "มีอะไรขายบ้างครับ"     → "สินค้าแนะนำ" (หรือใช้ list_products)
-        "อยากได้เคสไอโฟน"        → "เคส iPhone"
-        "เคส iPhone 15 มีไหม"   → "เคส iPhone 15"
-        "ช่วยหาหูฟังให้หน่อย"   → "หูฟัง"
-        "นโยบายการคืนเงิน"      → "นโยบายคืนเงิน"
-        "สายชาร์จเร็วมีไหม"     → "สายชาร์จเร็ว"
+    Examples (customer message → tool args):
+        "งบ 30000 อยากได้สายชาร์จ"  → query="สายชาร์จ", max_price=30000
+        "แนะนำสินค้าให้หน่อย"         → query="สินค้าแนะนำ"
+        "มีรุ่นไหนแนะนำบ้าง"          → query="สินค้าแนะนำ" (ห้ามส่งแค่ "รุ่น")
+        "เคส iPhone 15 มีไหม"         → query="เคส iPhone 15"
+        "นโยบายการคืนเงิน"           → query="นโยบายคืนเงิน"
 
-    Wrong — never pass these as `query`:
-        "รุ่น", "แนะนำหน่อย", "มีอะไรบ้าง", "แนะนำสินค้าให้หน่อย",
-        "มีรุ่นไหนบ้าง", "ช่วยค้นหาให้หน่อย"
+    Wrong — never do this:
+        query="สายชาร์จ 30000" หรือ query="รุ่น" หรือ query="แนะนำหน่อย"
 
-    For open-ended "recommend something" with no specific category, search with
-    a broad catalog keyword such as "สินค้าแนะนำ" or "อุปกรณ์เสริมมือถือ", or
-    call list_products() with empty filters to browse the full catalog.
-
-    Args:
-        query: Short extracted keywords for vector search (product name, model,
-            category, or policy topic). Ideally 2–6 words. Thai or English.
+    For open-ended browse with no category, use query="สินค้าแนะนำ" or
+    call list_products() with empty filters.
 
     Returns:
         A formatted string listing relevant products and/or FAQ excerpts.
     """
     query = _normalize_search_query(query)
-    # Try Pinecone vector search first
+    budget_note = ""
+    if max_price and max_price > 0:
+        budget_note = f" (งบไม่เกิน {max_price:,.0f} บาท)"
+
     pinecone_results = _search_pinecone(query)
 
     if pinecone_results:
-        header = (
-            f"[Vector Search] Found {len(pinecone_results)} result(s) "
-            f"matching '{query}':\n\n"
-        )
-        return header + _format_search_results(pinecone_results)
+        pinecone_results = _filter_results_by_max_price(pinecone_results, max_price)
+        if pinecone_results:
+            header = (
+                f"[Vector Search] Found {len(pinecone_results)} result(s) "
+                f"matching '{query}'{budget_note}:\n\n"
+            )
+            return header + _format_search_results(pinecone_results)
 
-    # Fallback to in-memory keyword search (products only)
     memory_results = _search_in_memory(query)
+    memory_results = _filter_results_by_max_price(memory_results, max_price)
 
     if memory_results:
         header = (
             f"[Keyword Fallback] Found {len(memory_results)} product(s) "
-            f"matching '{query}' (FAQ not available offline):\n\n"
+            f"matching '{query}'{budget_note} (FAQ not available offline):\n\n"
         )
         return header + _format_search_results(memory_results)
 
+    if max_price and max_price > 0:
+        return (
+            f"No relevant information found for '{query}' within budget "
+            f"{max_price:,.0f} THB. Try a broader category or higher budget."
+        )
     return (
         f"No relevant information found for '{query}'. "
         "Try searching with broader terms or different keywords."
     )
 
 
-@tool
+@tool(args_schema=CalculateDiscountInput)
 def calculate_discount(
     product_name: str, original_price: float, discount_percent: float
 ) -> str:
@@ -347,7 +426,7 @@ def _normalize_sort(value: str) -> str:
     return ""
 
 
-@tool
+@tool(args_schema=ListProductsInput)
 def list_products(
     category: str = "",
     keyword: str = "",
@@ -360,32 +439,8 @@ def list_products(
     Use this tool (NOT search_knowledge_base) whenever the customer asks about
     price ranges, rankings, or budgets — e.g. "หูฟังแพงที่สุด", "ของถูกสุดในร้าน",
     "มีอะไรในงบ 3000 บาท", "มีเคสรุ่นไหนบ้าง", "หูฟังมีกี่รุ่น".
-    Also use for open-ended browse requests such as "มีสินค้าอะไรบ้าง" (leave
-    category and keyword empty to list the full catalog).
-    Unlike the semantic search, this returns precise catalog data sorted by
-    price, so you can correctly answer "most/least expensive" and budget
-    questions and know the FULL list of options in a category.
-
-    CRITICAL — budget / งบประมาณ semantics:
-    "งบ 30,000" or "ในงบ 3000" means MAX price (ราคาไม่เกิน), NOT exact price.
-    Set max_price=30000 (or 3000) and min_price=0 — never set both min and max
-    to the same value for a budget. A 300 baht cable is valid for a 30,000 baht
-    budget. When the customer later names a category (e.g. "สายชาร์จ") without
-    repeating the budget, filter by category/keyword only — do not require price
-    to equal the old budget figure.
-
-    Args:
-        category: Filter by category or product type, matched loosely against both
-            the category and the product name (e.g. "Audio", "หูฟัง", "เคส",
-            "ฟิล์ม", "สายชาร์จ"). Empty = all categories.
-        keyword: Optional extra keyword to match in the product name/description
-            (e.g. a phone model like "iPhone 15"). Empty = ignore.
-        min_price: Only include products at or above this price in THB. 0 = no floor.
-            Do NOT set this to the customer's budget — budget goes in max_price.
-        max_price: Budget ceiling — include products at or below this price in THB.
-            0 = no cap.
-        sort_by_price: "desc" for most-expensive-first, "asc" for cheapest-first,
-            empty for catalog order.
+    Put the product/category in `category` or `keyword`; put budget only in
+    `max_price` — never in both min and max for the same budget figure.
 
     Returns:
         A formatted list of matching products (name, price, category, stock,
