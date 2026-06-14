@@ -17,7 +17,13 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
-from ai_sales.consts import MAX_DISCOUNT_PERCENT
+from ai_sales.consts import (
+    LIST_PRODUCTS_DEFAULT_LIMIT,
+    LIST_PRODUCTS_MAX_LIMIT,
+    MAX_DISCOUNT_PERCENT,
+    PRODUCT_DISPLAY_LIMIT,
+    VECTOR_TOP_K,
+)
 from ai_sales.channels import line_delivery
 from ai_sales.payments import qr as payment_qr
 from ai_sales.payments import slip2go
@@ -26,7 +32,13 @@ from ai_sales.tools.order_total import resolve_order_from_messages
 
 logger = logging.getLogger(__name__)
 
-_CATALOG_FALLBACK_LIMIT = 3
+_CATALOG_FALLBACK_LIMIT = PRODUCT_DISPLAY_LIMIT
+
+_PURE_CATALOG_BROWSE_RE = re.compile(
+    r"มี(?:สินค้า)?อะไร(?:บ้าง|ขาย)|มีอะไรขาย|ขายอะไร|"
+    r"สินค้ามีอะไร|ดูสินค้า|มีของอะไร",
+    re.IGNORECASE,
+)
 
 _BROAD_BROWSE_QUERIES = frozenset(
     {
@@ -96,6 +108,21 @@ class ListProductsInput(BaseModel):
         default="",
         description="'desc' = แพงสุดก่อน, 'asc' = ถูกสุดก่อน, ว่าง = ลำดับในคลัง",
     )
+    limit: int = Field(
+        default=LIST_PRODUCTS_DEFAULT_LIMIT,
+        description=(
+            "จำนวนสินค้าสูงสุดที่แสดง (ค่าเริ่มต้น 3) — "
+            "ถ้าลูกค้าถามกว้างๆ ให้ใช้ 3 รายการพอ ห้ามดึงทั้งคลัง"
+        ),
+    )
+    display_mode: str = Field(
+        default="auto",
+        description=(
+            "'categories' = แสดงเฉพาะหมวดหมู่ (ใช้เมื่อลูกค้าถามว่ามีอะไรขายบ้าง), "
+            "'featured' = สินค้าแนะนำไม่เกิน limit รายการ, "
+            "'auto' = เลือกตามเงื่อนไขอัตโนมัติ"
+        ),
+    )
 
 
 class CalculateDiscountInput(BaseModel):
@@ -155,7 +182,7 @@ def transfer_payment_qr_update(state: dict) -> dict:
     return {"payment_qr": qr_data, "messages": [AIMessage(content=reply)]}
 
 
-def _search_pinecone(query: str, top_k: int = 5) -> list[dict] | None:
+def _search_pinecone(query: str, top_k: int = VECTOR_TOP_K) -> list[dict] | None:
     """Perform semantic search on Pinecone. Returns list of metadata dicts or None on failure."""
     try:
         from ai_sales.config.vectorstore import get_embeddings, get_pinecone_index
@@ -256,6 +283,66 @@ def _normalize_search_query(query: str) -> str:
     return q
 
 
+def _is_pure_catalog_browse(text: str) -> bool:
+    """True for 'what do you sell' — route to category overview, not product dump."""
+    return bool(_PURE_CATALOG_BROWSE_RE.search((text or "").strip()))
+
+
+def _clamp_limit(limit: int) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        value = LIST_PRODUCTS_DEFAULT_LIMIT
+    return max(1, min(value, LIST_PRODUCTS_MAX_LIMIT))
+
+
+def _catalog_categories() -> list[dict]:
+    """Unique in-stock categories with counts for lightweight browse responses."""
+    counts: dict[str, int] = {}
+    for product in get_product_catalog():
+        if int(product.get("stock", 0) or 0) <= 0:
+            continue
+        cat = str(product.get("category", "")).strip() or "อื่นๆ"
+        counts[cat] = counts.get(cat, 0) + 1
+    if not counts:
+        for product in get_product_catalog():
+            cat = str(product.get("category", "")).strip() or "อื่นๆ"
+            counts[cat] = counts.get(cat, 0) + 1
+    return [{"category": name, "count": count} for name, count in sorted(counts.items())]
+
+
+def _format_category_overview(categories: list[dict]) -> str:
+    lines = [
+        "[หมวดหมู่สินค้า] ร้านมีสินค้าหลายหมวด — ถามลูกค้าว่าสนใจหมวดไหน:",
+    ]
+    for row in categories:
+        lines.append(f"• {row['category']} ({row['count']} รายการ)")
+    lines.append(
+        "คำสั่ง: ตอบสั้นๆ แนะนำหมวดหมู่ ห้ามไล่รายการสินค้าทุกชิ้น "
+        "รอให้ลูกค้าเลือกหมวดก่อน แล้วค่อยเรียก list_products ด้วย category"
+    )
+    return "\n".join(lines)
+
+
+def _format_product_compact(product: dict) -> str:
+    price = float(product.get("price", 0) or 0)
+    stock = "มีสินค้า" if int(product.get("stock", 0) or 0) > 0 else "สินค้าหมด"
+    return (
+        f"- {product.get('name', 'N/A')} | ราคา {price:.0f} บาท "
+        f"| หมวด: {product.get('category', 'N/A')} | {stock}"
+    )
+
+
+def _cap_product_results(results: list[dict], limit: int | None = None) -> list[dict]:
+    cap = _clamp_limit(limit if limit is not None else PRODUCT_DISPLAY_LIMIT)
+    products = (
+        _product_hits(results)
+        if any(r.get("source_type") == "product" for r in results)
+        else results
+    )
+    return products[:cap]
+
+
 def _is_broad_browse_query(query: str, *, raw_query: str | None = None) -> bool:
     """True when the query is a vague browse intent (not a specific product lookup)."""
     for candidate in (raw_query, query):
@@ -290,7 +377,7 @@ def _format_catalog_fallback_response(
         f"for broad browse '{query}'{budget_note} "
         "(vector/keyword had no product match — using live catalog):\n\n"
     )
-    return header + _format_search_results(picks)
+    return header + _format_search_results(picks, compact=True)
 
 
 def _catalog_browse_fallback(
@@ -338,7 +425,7 @@ def _filter_results_by_max_price(
     return filtered
 
 
-def _search_in_memory(query: str) -> list[dict]:
+def _search_in_memory(query: str, limit: int = PRODUCT_DISPLAY_LIMIT) -> list[dict]:
     """Fallback: keyword search against the in-memory product catalog only."""
     query_lower = query.lower().strip()
     tokens = _tokenize_query(query)
@@ -356,17 +443,22 @@ def _search_in_memory(query: str) -> list[dict]:
             product_meta = product.copy()
             product_meta["source_type"] = "product"
             results.append(product_meta)
+        if len(results) >= _clamp_limit(limit):
+            break
     return results
 
 
-def _format_search_results(results: list[dict]) -> str:
+def _format_search_results(results: list[dict], *, compact: bool = False) -> str:
     """Format search results based on source_type (product or faq)."""
     lines = []
     for r in results:
         source_type = r.get("source_type", "unknown")
         score_pct = r.get("score", 0) * 100
-        
+
         if source_type == "product":
+            if compact:
+                lines.append(_format_product_compact(r))
+                continue
             in_stock = "Yes" if int(r.get("stock", 0)) > 0 else "No"
             lines.append(
                 f"[Product] {r.get('name', 'N/A')} (ID: {r.get('id', 'N/A')})\n"
@@ -451,13 +543,23 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
         pinecone_results = _filter_results_by_max_price(pinecone_results, budget_cap)
         products = _product_hits(pinecone_results)
         if products:
-            logger.info("search_knowledge_base hit vector products=%s", len(products))
+            shown = _cap_product_results(products)
+            total = len(products)
+            logger.info("search_knowledge_base hit vector products=%s", total)
             header = (
-                f"[Vector Search] Found {len(products)} result(s) "
-                f"matching '{query}'{budget_note}:\n\n"
+                f"[Vector Search] Found {total} result(s) "
+                f"matching '{query}'{budget_note}"
             )
-            return header + _format_search_results(products)
+            if total > len(shown):
+                header += f" (showing top {len(shown)}):"
+            else:
+                header += ":"
+            header += "\n\n"
+            return header + _format_search_results(
+                shown, compact=broad or total > PRODUCT_DISPLAY_LIMIT
+            )
         if not broad and pinecone_results:
+            faq_hits = pinecone_results[:PRODUCT_DISPLAY_LIMIT]
             logger.info(
                 "search_knowledge_base hit vector non-product count=%s",
                 len(pinecone_results),
@@ -466,9 +568,9 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
                 f"[Vector Search] Found {len(pinecone_results)} result(s) "
                 f"matching '{query}'{budget_note}:\n\n"
             )
-            return header + _format_search_results(pinecone_results)
+            return header + _format_search_results(faq_hits)
 
-    memory_results = _search_in_memory(query)
+    memory_results = _search_in_memory(query, limit=PRODUCT_DISPLAY_LIMIT)
     memory_results = _filter_results_by_max_price(memory_results, budget_cap)
 
     if memory_results:
@@ -479,7 +581,7 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
             f"[Keyword Fallback] Found {len(memory_results)} product(s) "
             f"matching '{query}'{budget_note} (FAQ not available offline):\n\n"
         )
-        return header + _format_search_results(memory_results)
+        return header + _format_search_results(memory_results, compact=True)
 
     if broad:
         fallback = _catalog_browse_fallback(budget_cap)
@@ -559,6 +661,8 @@ def list_products(
     min_price: float = 0,
     max_price: float = 0,
     sort_by_price: str = "",
+    limit: int = LIST_PRODUCTS_DEFAULT_LIMIT,
+    display_mode: str = "auto",
 ) -> str:
     """List products from the shop catalog with exact filtering and price sorting.
 
@@ -568,17 +672,46 @@ def list_products(
     Put the product/category in `category` or `keyword`; put budget only in
     `max_price` — never in both min and max for the same budget figure.
 
+    Token efficiency:
+    - When the customer asks broadly "มีอะไรขายบ้าง" with no category, use
+      display_mode='categories' to show category names only (not every SKU).
+    - Otherwise keep `limit` at 3 unless the customer needs a longer list.
+    - Never dump the full catalog — cap with `limit` (max 10).
+
     Returns:
-        A formatted list of matching products (name, price, category, stock,
-        description), or a clear message that no product matches the filters.
+        A formatted list of matching products (name, price, category, stock),
+        a category overview, or a clear message that no product matches.
     """
     catalog = get_product_catalog()
     cat = category.strip().lower()
     kw = keyword.strip().lower()
+    row_limit = _clamp_limit(limit)
+    mode = (display_mode or "auto").strip().lower()
 
     # LLM often sets min_price == max_price for "งบ X" — budget is a ceiling only.
     if min_price > 0 and max_price > 0 and min_price == max_price:
         min_price = 0
+
+    open_browse = not cat and not kw and not min_price and not max_price and not sort_by_price
+    if open_browse:
+        if mode == "categories":
+            categories = _catalog_categories()
+            if categories:
+                return _format_category_overview(categories)
+        fallback = _catalog_browse_fallback(
+            max_price if max_price > 0 else None, limit=row_limit
+        )
+        if fallback:
+            lines = [
+                "[Catalog] สินค้าแนะนำจากคลังสด "
+                f"({len(fallback)} รายการ):",
+            ]
+            lines.extend(_format_product_compact(p) for p in fallback)
+            lines.append(
+                "คำสั่ง: แนะนำสั้นๆ ไม่เกินรายการด้านบน "
+                "ถามหมวดหมู่เพิ่มถ้าลูกค้ายังไม่ชัด"
+            )
+            return "\n".join(lines)
 
     matches = []
     for product in catalog:
@@ -600,7 +733,7 @@ def list_products(
     if not matches:
         if not cat and not kw:
             fallback = _catalog_browse_fallback(
-                max_price if max_price > 0 else None
+                max_price if max_price > 0 else None, limit=row_limit
             )
             if fallback:
                 logger.info(
@@ -613,15 +746,10 @@ def list_products(
                     "[Catalog Fallback] แสดงสินค้าแนะนำจากคลังสด "
                     f"({len(fallback)} รายการ — vector/keyword ไม่ตรง):"
                 ]
-                for p in fallback:
-                    in_stock = (
-                        "มีสินค้า" if int(p.get("stock", 0)) > 0 else "สินค้าหมด"
-                    )
-                    lines.append(
-                        f"- {p.get('name', 'N/A')} | ราคา {float(p.get('price', 0)):.0f} บาท "
-                        f"| หมวด: {p.get('category', 'N/A')} | {in_stock}\n"
-                        f"  รายละเอียด: {p.get('description', 'N/A')}"
-                    )
+                lines.extend(_format_product_compact(p) for p in fallback)
+                lines.append(
+                    "คำสั่ง: แนะนำสั้นๆ ไม่เกินรายการด้านบน ถามหมวดหมู่เพิ่มถ้าลูกค้ายังไม่ชัด"
+                )
                 return "\n".join(lines)
         return (
             "[Catalog] ไม่พบสินค้าที่ตรงกับเงื่อนไขนี้ในร้าน "
@@ -637,13 +765,14 @@ def list_products(
     elif order == "asc":
         matches.sort(key=lambda p: float(p.get("price", 0)))
 
-    lines = [f"[Catalog] พบ {len(matches)} รายการ:"]
-    for p in matches:
-        in_stock = "มีสินค้า" if int(p.get("stock", 0)) > 0 else "สินค้าหมด"
+    total = len(matches)
+    shown = matches[:row_limit]
+    lines = [f"[Catalog] พบ {total} รายการ (แสดง {len(shown)}):"]
+    lines.extend(_format_product_compact(p) for p in shown)
+    if total > len(shown):
         lines.append(
-            f"- {p.get('name', 'N/A')} | ราคา {float(p.get('price', 0)):.0f} บาท "
-            f"| หมวด: {p.get('category', 'N/A')} | {in_stock}\n"
-            f"  รายละเอียด: {p.get('description', 'N/A')}"
+            f"คำสั่ง: มีอีก {total - len(shown)} รายการ — "
+            "ถามลูกค้าให้ระบุหมวด/รุ่นเพิ่มแทนการไล่ทั้งหมด"
         )
     return "\n".join(lines)
 

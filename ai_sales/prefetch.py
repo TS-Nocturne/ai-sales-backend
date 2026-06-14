@@ -3,16 +3,24 @@ Pre-fetch live catalog context before the agent runs.
 
 Runs synchronously in ``send_message`` so the model sees real inventory in the
 system prompt on the first token — before it can hallucinate "หลายแบบให้เลือก".
+
+Token budget: never inject the full catalog. Broad browse → categories only;
+specific intents → at most PREFETCH_DISPLAY_LIMIT compact product rows.
 """
 
 from __future__ import annotations
 
 import re
 
+from ai_sales.consts import PREFETCH_DISPLAY_LIMIT
 from ai_sales.tools.catalog import get_product_catalog
 from ai_sales.tools.sales_tools import (
     _catalog_browse_fallback,
+    _catalog_categories,
+    _format_category_overview,
+    _format_product_compact,
     _is_broad_browse_query,
+    _is_pure_catalog_browse,
     _search_in_memory,
 )
 
@@ -106,24 +114,29 @@ def _resolve_prefetch_results(message: str, summary: str) -> list[dict]:
 
     combined = f"{message} {summary}".strip()
     category = _category_hint(combined)
-    catalog = get_product_catalog()
 
-    results = _search_in_memory(query)
+    results = _search_in_memory(query, limit=PREFETCH_DISPLAY_LIMIT)
     if category:
-        results = _filter_by_category(results or catalog, category)
-    elif not results:
-        results = list(catalog)
+        if not results:
+            catalog = get_product_catalog()
+            results = _filter_by_category(catalog, category)[:PREFETCH_DISPLAY_LIMIT]
+    elif not results and _is_broad_browse_query(message):
+        if _is_pure_catalog_browse(message):
+            return []
+        results = [
+            {k: v for k, v in p.items() if k not in ("source_type", "score")}
+            for p in _catalog_browse_fallback(limit=PREFETCH_DISPLAY_LIMIT)
+        ]
 
     model_hint = _iphone_model_hint(combined)
     if model_hint:
         model_matches = _filter_by_model(results, combined)
         if model_matches:
-            results = model_matches
+            results = model_matches[:PREFETCH_DISPLAY_LIMIT]
         elif category:
-            # Customer named a model in a category — do not fall back to unrelated SKUs.
             return []
 
-    return results
+    return results[:PREFETCH_DISPLAY_LIMIT]
 
 
 def _format_prefetch(results: list[dict], query_label: str) -> str:
@@ -132,14 +145,8 @@ def _format_prefetch(results: list[dict], query_label: str) -> str:
         f"ค้นหาจาก: {query_label}",
         f"พบ {len(results)} รายการ:",
     ]
-    for product in results[:20]:
-        price = float(product.get("price", 0) or 0)
-        stock = int(product.get("stock", 0) or 0)
-        stock_label = "มีสินค้า" if stock > 0 else "สินค้าหมด"
-        lines.append(
-            f"• {product.get('name', 'N/A')} | {price:.0f} บาท "
-            f"| หมวด: {product.get('category', 'N/A')} | {stock_label}"
-        )
+    for product in results:
+        lines.append(_format_product_compact(product))
 
     if len(results) == 1:
         lines.append(
@@ -149,7 +156,7 @@ def _format_prefetch(results: list[dict], query_label: str) -> str:
     else:
         lines.append(
             f"คำสั่ง: มี {len(results)} รายการ — แจกแจงตามรายการด้านบนเท่านั้น "
-            "ห้ามอ้างว่ามีมากกว่าที่ระบุ"
+            "ห้ามอ้างว่ามีมากกว่าที่ระบุ ตอบกระชับเหมาะกับ LINE"
         )
     return "\n".join(lines)
 
@@ -161,13 +168,18 @@ def build_catalog_prefetch(message: str, conversation_summary: str = "") -> str:
     if not _looks_like_product_turn(message, summary):
         return ""
 
+    if _is_pure_catalog_browse(message):
+        categories = _catalog_categories()
+        if categories:
+            return _format_category_overview(categories)
+
     results = _resolve_prefetch_results(message, summary)
     catalog_size = len(get_product_catalog())
     if not results and catalog_size > 0:
         if _is_broad_browse_query(message):
             results = [
                 {k: v for k, v in p.items() if k not in ("source_type", "score")}
-                for p in _catalog_browse_fallback(limit=20)
+                for p in _catalog_browse_fallback(limit=PREFETCH_DISPLAY_LIMIT)
             ]
     if not results:
         return (

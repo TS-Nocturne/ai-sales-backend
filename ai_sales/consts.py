@@ -19,6 +19,13 @@ MAX_TOOL_ITERATIONS = 10
 MANAGER_APPROVAL_DISCOUNT_THRESHOLD = 15
 MAX_DISCOUNT_PERCENT = 50
 
+# Retrieval / context limits (token efficiency — avoid context bleeding)
+VECTOR_TOP_K = 5
+PRODUCT_DISPLAY_LIMIT = 3
+PREFETCH_DISPLAY_LIMIT = 3
+LIST_PRODUCTS_DEFAULT_LIMIT = 3
+LIST_PRODUCTS_MAX_LIMIT = 10
+
 # Conversation memory: when the running transcript exceeds SUMMARY_TRIGGER_COUNT
 # messages, fold everything older than SUMMARY_KEEP_RECENT messages (snapped to a
 # turn boundary) into a rolling summary. Keep enough recent messages for multi-step

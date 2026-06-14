@@ -46,7 +46,7 @@ from ai_sales.tools.order_total import (
     looks_like_transfer_intent,
     should_auto_generate_qr,
 )
-from ai_sales.tools.sales_tools import all_tools, transfer_payment_qr_update
+from ai_sales.tools.sales_tools import all_tools, _is_pure_catalog_browse, transfer_payment_qr_update
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,7 @@ def _browse_already_satisfied(messages: list) -> bool:
     for msg in messages[last_human_idx:]:
         if isinstance(msg, ToolMessage):
             text = _normalize_message_text(msg.content)
-            if "[Catalog]" in text or "[Vector Search]" in text or "[Catalog Fallback]" in text:
+            if "[Catalog]" in text or "[Vector Search]" in text or "[Catalog Fallback]" in text or "[หมวดหมู่สินค้า]" in text:
                 return True
     return False
 
@@ -210,6 +210,13 @@ def _should_auto_browse_catalog(text: str) -> bool:
     )
 
 
+def _browse_display_mode(customer_text: str) -> str:
+    """Category overview for pure 'what do you sell'; featured samples otherwise."""
+    if _is_pure_catalog_browse(customer_text):
+        return "categories"
+    return "featured"
+
+
 def _browse_catalog_tool_call(customer_text: str) -> AIMessage:
     """Emit a list_products tool call for vague browse / recommend / budget turns."""
     return AIMessage(
@@ -223,6 +230,8 @@ def _browse_catalog_tool_call(customer_text: str) -> AIMessage:
                     "min_price": 0,
                     "max_price": _extract_budget_ceiling(customer_text),
                     "sort_by_price": "",
+                    "limit": 3,
+                    "display_mode": _browse_display_mode(customer_text),
                 },
                 "id": f"call_{uuid.uuid4().hex[:12]}",
                 "type": "tool_call",

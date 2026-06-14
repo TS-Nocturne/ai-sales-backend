@@ -10,7 +10,8 @@ def test_prefetch_skips_non_product_greeting():
 def test_prefetch_broad_catalog_question():
     ctx = build_catalog_prefetch("มีสินค้าอะไรบ้างครับ")
     assert ctx
-    assert "พบ" in ctx
+    assert "[หมวดหมู่สินค้า]" in ctx
+    assert "หมวด" in ctx
 
 
 def test_prefetch_budget_browse_question():

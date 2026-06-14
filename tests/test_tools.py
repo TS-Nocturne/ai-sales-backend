@@ -111,10 +111,55 @@ def test_list_products_open_browse_catalog_fallback(monkeypatch):
         ],
     )
     result = list_products.invoke(
-        {"category": "", "keyword": "", "min_price": 0, "max_price": 0, "sort_by_price": ""}
+        {
+            "category": "",
+            "keyword": "",
+            "min_price": 0,
+            "max_price": 0,
+            "sort_by_price": "",
+            "display_mode": "featured",
+        }
     )
-    assert "[Catalog Fallback]" in result
+    assert "[Catalog]" in result
     assert "สายชาร์จทดสอบ" in result
+
+
+def test_list_products_pure_browse_returns_categories():
+    result = list_products.invoke(
+        {
+            "category": "",
+            "keyword": "",
+            "min_price": 0,
+            "max_price": 0,
+            "sort_by_price": "",
+            "display_mode": "categories",
+        }
+    )
+    assert "[หมวดหมู่สินค้า]" in result
+    assert "รายการ)" in result
+
+
+def test_list_products_respects_limit():
+    result = list_products.invoke(
+        {
+            "category": "",
+            "keyword": "",
+            "min_price": 0,
+            "max_price": 0,
+            "sort_by_price": "",
+            "limit": 2,
+            "display_mode": "featured",
+        }
+    )
+    assert "แสดง 2" in result or "(2 รายการ)" in result
+
+
+def test_is_pure_catalog_browse():
+    import ai_sales.tools.sales_tools as sales_tools
+
+    assert sales_tools._is_pure_catalog_browse("มีอะไรขายบ้าง")
+    assert sales_tools._is_pure_catalog_browse("ขายอะไรบ้าง")
+    assert not sales_tools._is_pure_catalog_browse("แนะนำสินค้าให้หน่อย")
 
 
 def test_calculate_discount_valid():
