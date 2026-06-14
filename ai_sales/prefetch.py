@@ -18,7 +18,7 @@ _PRODUCT_INTENT = re.compile(
     r"เคส|case|ฟิล์|film|"
     r"สายชาร|charger|หูฟัง|earphone|headphone|"
     r"แบต|power\s?bank|"
-    r"ซื้อ|สนใจ|มีไหม|มี.*บ้าง|ราคา|งบ|แนะนำ|เลือก|"
+    r"ซื้อ|สนใจ|มีไหม|มี.*บ้าง|มี.*อะไร.*บ้าง|มีอะไรขาย|ขายอะไร|ราคา|งบ|แนะนำ|เลือก|"
     r"iphone|ไอโฟน|samsung|ซัมซung|"
     r"pro\s?max|promax"
     r")",

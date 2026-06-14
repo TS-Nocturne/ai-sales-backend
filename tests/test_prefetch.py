@@ -7,6 +7,12 @@ def test_prefetch_skips_non_product_greeting():
     assert build_catalog_prefetch("สวัสดีครับ") == ""
 
 
+def test_prefetch_broad_catalog_question():
+    ctx = build_catalog_prefetch("มีสินค้าอะไรบ้างครับ")
+    assert ctx
+    assert "พบ" in ctx
+
+
 def test_prefetch_single_iphone_case():
     ctx = build_catalog_prefetch("จะซื้อเคส iPhone 15 Pro Max")
     assert ctx

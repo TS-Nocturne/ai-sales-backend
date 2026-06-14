@@ -21,6 +21,10 @@ _APPROVAL_FINAL_BAHT = re.compile(
     re.IGNORECASE,
 )
 _AI_ANY_BAHT = re.compile(r"([\d,.]+)\s*บาท", re.IGNORECASE)
+_BUDGET_CONTEXT = re.compile(
+    r"(?:งบ(?:ประมาณ)?|ในงบ|budget|ไม่เกิน|ภายใน|ประมาณ|max(?:imum)?)\s*",
+    re.IGNORECASE,
+)
 _TRANSFER_INTENT = re.compile(
     r"(โอนเงิน|โอนมา|โอนให้|จะโอน|ชำระ.*โอน|transfer)",
     re.IGNORECASE,
@@ -67,6 +71,13 @@ def looks_like_transfer_already_done(text: str) -> bool:
     return bool(_TRANSFER_ALREADY_DONE.search(text or ""))
 
 
+def _amount_in_budget_context(text: str, match: re.Match[str]) -> bool:
+    """True when a baht figure is a budget ceiling, not an agreed order total."""
+    start = max(0, match.start() - 40)
+    window = text[start : match.end()]
+    return bool(_BUDGET_CONTEXT.search(window))
+
+
 def should_auto_generate_qr(messages: list) -> bool:
     """True when the latest customer message is choosing bank transfer with a known total."""
     if not messages:
@@ -80,7 +91,16 @@ def should_auto_generate_qr(messages: list) -> bool:
         return False
     if not looks_like_transfer_intent(last) or looks_like_transfer_already_done(last):
         return False
-    return resolve_order_from_messages(messages) is not None
+    resolved = resolve_order_from_messages(messages)
+    if not resolved:
+        return False
+    # A bare agent quote (e.g. echoing "งบ 30,000 บาท") is not an order total.
+    if resolved.get("source") == "agent_quote":
+        if resolved.get("quote_kind") != "final" and not conversation_has_buy_intent(
+            messages
+        ):
+            return False
+    return True
 
 
 def _parse_amount(raw: str) -> float | None:
@@ -171,23 +191,31 @@ def _latest_ai_quoted_price(messages: list) -> dict | None:
         text = _message_text(msg.content)
         matches = list(_AI_FINAL_BAHT.finditer(text))
         if matches:
-            amount = _parse_amount(matches[-1].group(1))
-            if amount is not None:
-                return {
-                    "amount": amount,
-                    "items": "สินค้าที่สั่ง",
-                    "source": "agent_quote",
-                }
+            for match in reversed(matches):
+                if _amount_in_budget_context(text, match):
+                    continue
+                amount = _parse_amount(match.group(1))
+                if amount is not None:
+                    return {
+                        "amount": amount,
+                        "items": "สินค้าที่สั่ง",
+                        "source": "agent_quote",
+                        "quote_kind": "final",
+                    }
         # Fallback: last baht amount mentioned by the agent before transfer.
         any_matches = list(_AI_ANY_BAHT.finditer(text))
         if any_matches:
-            amount = _parse_amount(any_matches[-1].group(1))
-            if amount is not None:
-                return {
-                    "amount": amount,
-                    "items": "สินค้าที่สั่ง",
-                    "source": "agent_quote",
-                }
+            for match in reversed(any_matches):
+                if _amount_in_budget_context(text, match):
+                    continue
+                amount = _parse_amount(match.group(1))
+                if amount is not None:
+                    return {
+                        "amount": amount,
+                        "items": "สินค้าที่สั่ง",
+                        "source": "agent_quote",
+                        "quote_kind": "any",
+                    }
     return None
 
 

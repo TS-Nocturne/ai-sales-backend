@@ -96,6 +96,27 @@ def _looks_like_search_filler(text: str) -> bool:
     return any(marker.lower() in low for marker in _SEARCH_FILLER_MARKERS)
 
 
+_BROAD_CATALOG_MARKERS = (
+    "มีสินค้าอะไร",
+    "มีอะไรบ้าง",
+    "มีอะไรขาย",
+    "ขายอะไร",
+    "สินค้ามีอะไร",
+    "ดูสินค้า",
+    "แนะนำสินค้า",
+    "มีของอะไร",
+    "มีอะไรแนะนำ",
+)
+
+
+def _looks_like_broad_catalog_query(text: str) -> bool:
+    """True when the customer asks an open-ended what-do-you-sell question."""
+    compact = re.sub(r"\s+", "", (text or "").lower())
+    if not compact:
+        return False
+    return any(marker.replace(" ", "") in compact for marker in _BROAD_CATALOG_MARKERS)
+
+
 # Internal bookkeeping messages (lead scoring / approval) that are written into
 # the conversation for staff/manager visibility but must NEVER be shown to the
 # customer — nor fed back into the sales agent (or it learns to imitate them).
@@ -286,13 +307,22 @@ def sales_agent_node(state: SalesState) -> dict:
         text = _normalize_message_text(response.content)
         last_customer = _last_customer_text(state["messages"])
         if last_customer and looks_like_transfer_intent(last_customer):
-            return transfer_payment_qr_update(state)
-        if text and _looks_like_search_filler(text):
+            if should_auto_generate_qr(state["messages"]):
+                return transfer_payment_qr_update(state)
+        needs_forced_tool = (
+            (text and _looks_like_search_filler(text))
+            or (
+                _looks_like_broad_catalog_query(last_customer)
+                and not text.strip()
+            )
+        )
+        if needs_forced_tool:
             forced_llm = get_llm_with_tools_forced(all_tools)
             response = forced_llm.invoke(messages_with_system)
             if not getattr(response, "tool_calls", None):
                 if last_customer and looks_like_transfer_intent(last_customer):
-                    return transfer_payment_qr_update(state)
+                    if should_auto_generate_qr(state["messages"]):
+                        return transfer_payment_qr_update(state)
         elif not text.strip():
             # Never end the turn silently — an empty reply makes the channel
             # show a generic error. Ask the customer to clarify instead.

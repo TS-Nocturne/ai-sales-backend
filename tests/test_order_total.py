@@ -130,3 +130,35 @@ def test_should_not_auto_qr_for_cod():
         HumanMessage(content="เก็บปลายทางครับ"),
     ]
     assert not should_auto_generate_qr(messages)
+
+
+def test_should_not_auto_qr_when_only_budget_mentioned():
+    messages = [
+        HumanMessage(content="งบ 30,000"),
+        AIMessage(content="รับทราบค่ะ งบประมาณ 30,000 บาทนะคะ"),
+        HumanMessage(content="โอนเงิน"),
+    ]
+    assert resolve_order_from_messages(messages) is None
+    assert not should_auto_generate_qr(messages)
+
+
+def test_budget_amount_not_used_as_order_total():
+    messages = [
+        AIMessage(content="รับทราบค่ะ งบประมาณ 30,000 บาทนะคะ"),
+        HumanMessage(content="โอนเงินครับ"),
+    ]
+    assert resolve_order_from_messages(messages) is None
+
+
+def test_final_price_still_resolves_after_budget_turn():
+    messages = [
+        HumanMessage(content="งบ 30,000"),
+        AIMessage(content="รับทราบค่ะ งบประมาณ 30,000 บาทนะคะ"),
+        AIMessage(content="สายชาร์จรุ่นนี้ราคา 390 บาทค่ะ"),
+        HumanMessage(content="เอาเลยครับ"),
+        HumanMessage(content="โอนเงินครับ"),
+    ]
+    resolved = resolve_order_from_messages(messages)
+    assert resolved is not None
+    assert resolved["amount"] == 390.0
+    assert should_auto_generate_qr(messages)

@@ -295,9 +295,19 @@ def list_products(
     Use this tool (NOT search_knowledge_base) whenever the customer asks about
     price ranges, rankings, or budgets — e.g. "หูฟังแพงที่สุด", "ของถูกสุดในร้าน",
     "มีอะไรในงบ 3000 บาท", "มีเคสรุ่นไหนบ้าง", "หูฟังมีกี่รุ่น".
+    Also use for open-ended browse requests such as "มีสินค้าอะไรบ้าง" (leave
+    category and keyword empty to list the full catalog).
     Unlike the semantic search, this returns precise catalog data sorted by
     price, so you can correctly answer "most/least expensive" and budget
     questions and know the FULL list of options in a category.
+
+    CRITICAL — budget / งบประมาณ semantics:
+    "งบ 30,000" or "ในงบ 3000" means MAX price (ราคาไม่เกิน), NOT exact price.
+    Set max_price=30000 (or 3000) and min_price=0 — never set both min and max
+    to the same value for a budget. A 300 baht cable is valid for a 30,000 baht
+    budget. When the customer later names a category (e.g. "สายชาร์จ") without
+    repeating the budget, filter by category/keyword only — do not require price
+    to equal the old budget figure.
 
     Args:
         category: Filter by category or product type, matched loosely against both
@@ -306,7 +316,8 @@ def list_products(
         keyword: Optional extra keyword to match in the product name/description
             (e.g. a phone model like "iPhone 15"). Empty = ignore.
         min_price: Only include products at or above this price in THB. 0 = no floor.
-        max_price: Only include products at or below this price in THB (the budget).
+            Do NOT set this to the customer's budget — budget goes in max_price.
+        max_price: Budget ceiling — include products at or below this price in THB.
             0 = no cap.
         sort_by_price: "desc" for most-expensive-first, "asc" for cheapest-first,
             empty for catalog order.
@@ -318,6 +329,10 @@ def list_products(
     catalog = get_product_catalog()
     cat = category.strip().lower()
     kw = keyword.strip().lower()
+
+    # LLM often sets min_price == max_price for "งบ X" — budget is a ceiling only.
+    if min_price > 0 and max_price > 0 and min_price == max_price:
+        min_price = 0
 
     matches = []
     for product in catalog:
@@ -435,11 +450,16 @@ def generate_promptpay_qr(
 ) -> Command:
     """สร้าง QR PromptPay สำหรับให้ลูกค้าโอนเงิน.
 
-    เรียกทันทีเมื่อลูกค้าแจ้งว่าจะโอนเงิน (เช่น "โอนเงินครับ") — ไม่ต้องถามยอดซ้ำ
+    เรียกเมื่อลูกค้าแจ้งว่าจะโอนเงิน (เช่น "โอนเงินครับ") และมีสินค้า+ราคาที่
+    ตกลงแล้วในบทสนทนา — ไม่ต้องถามยอดซ้ำในกรณีนั้น
     ถ้า amount เป็น 0 หรือไม่ระบุ ระบบจะสรุปยอดจากบทสนทนาก่อนหน้าอัตโนมัติ
     (ราคาหลังส่วนลด / ราคาจากเครื่องมือค้นหา / ราคาที่เคยแจ้งลูกค้าแล้ว)
 
-    ห้ามเรียกถ้าลูกค้าเลือก COD (เก็บปลายทาง) หรือยังไม่เคยคุยสินค้า/ราคาเลย
+    ห้ามเรียกถ้า:
+    - ลูกค้าเลือก COD (เก็บปลายทาง)
+    - ยังไม่เคยคุยสินค้า/ราคาที่ตกลงซื้อเลย
+    - มีแค่ตัวเลข "งบประมาณ" (เช่น งบ 30,000) โดยยังไม่ได้เลือกสินค้า —
+      งบประมาณไม่ใช่ยอดโอน ต้องค้นหาสินค้าและแจ้งราคาก่อน
 
     ระบบจะสร้าง QR ผ่าน Slip2Go แล้วส่งรูป QR ให้ลูกค้าทาง LINE อัตโนมัติ
     (แจ้งลูกค้าว่าส่ง QR แล้ว และขอให้ส่งสลิปหลังโอน)

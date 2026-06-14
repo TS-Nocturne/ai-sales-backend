@@ -1,6 +1,6 @@
 """Tests for sales tools."""
 
-from ai_sales.tools.sales_tools import calculate_discount, search_knowledge_base
+from ai_sales.tools.sales_tools import calculate_discount, list_products, search_knowledge_base
 
 
 def test_search_knowledge_base_finds_iphone_case():
@@ -14,6 +14,21 @@ def test_search_knowledge_base_no_match(monkeypatch):
     monkeypatch.setattr(sales_tools, "_search_pinecone", lambda query, top_k=5: None)
     result = search_knowledge_base.invoke({"query": "nonexistent-xyz-12345"})
     assert "No relevant information found" in result
+
+
+def test_list_products_budget_ceiling_not_exact_price():
+    """งบ 30,000 must not be treated as exact price (min=max bug)."""
+    result = list_products.invoke(
+        {
+            "category": "สาย",
+            "keyword": "",
+            "min_price": 30000,
+            "max_price": 30000,
+            "sort_by_price": "",
+        }
+    )
+    assert "ไม่พบสินค้า" not in result
+    assert "บาท" in result
 
 
 def test_calculate_discount_valid():
