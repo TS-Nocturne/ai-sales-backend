@@ -112,6 +112,67 @@ def _tokenize_query(query: str) -> list[str]:
     return tokens or [query_lower]
 
 
+_VAGUE_QUERY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"มีรุ่น.*(?:แนะนำ|บ้าง)|(?:แนะนำ|บ้าง).*รุ่น|มีรุ่นไหน|รุ่นไหนบ้าง",
+            re.I,
+        ),
+        "สินค้าแนะนำ",
+    ),
+    (
+        re.compile(
+            r"แนะนำ.*(?:หน่อย|บ้าง)|มีอะไร(?:ขาย|บ้าง)|มีสินค้าอะไร|ขายอะไร",
+            re.I,
+        ),
+        "สินค้าแนะนำ",
+    ),
+    (
+        re.compile(r"ซื้ออะไรได้|งบ.*ซื้อ|ในงบ", re.I),
+        "สินค้าแนะนำ",
+    ),
+)
+
+_META_ONLY_WORDS = frozenset(
+    {
+        "รุ่น",
+        "แนะนำ",
+        "บ้าง",
+        "หน่อย",
+        "มี",
+        "อะไร",
+        "ขาย",
+        "สินค้า",
+        "ให้",
+        "ครับ",
+        "ค่ะ",
+        "นะ",
+        "คะ",
+        "ได้",
+        "ซื้อ",
+        "งบ",
+        "ไหน",
+        "ใหน",
+    }
+)
+
+
+def _normalize_search_query(query: str) -> str:
+    """Rewrite vague/meta customer phrases into concrete vector-search keywords."""
+    q = (query or "").strip()
+    if not q:
+        return q
+    for pattern, replacement in _VAGUE_QUERY_PATTERNS:
+        if pattern.search(q):
+            return replacement
+    tokens = _tokenize_query(q)
+    if tokens and all(token in _META_ONLY_WORDS for token in tokens):
+        return "สินค้าแนะนำ"
+    if len(q) <= 12 and tokens == ["รุ่น"]:
+        return "สินค้าแนะนำ"
+    return q
+
+
 def _search_in_memory(query: str) -> list[dict]:
     """Fallback: keyword search against the in-memory product catalog only."""
     query_lower = query.lower().strip()
@@ -185,8 +246,10 @@ def search_knowledge_base(query: str) -> str:
     policy topics. Never pass a full conversational phrase as-is.
 
     Examples (customer message → correct `query`):
-        "แนะนำสินค้าให้หน่อย"   → "สินค้ายอดนิยม" or "เคส ฟิล์ม สายชาร์จ"
-        "มีอะไรขายบ้างครับ"     → "อุปกรณ์เสริมมือถือ" (or use list_products)
+        "แนะนำสินค้าให้หน่อย"   → "สินค้าแนะนำ"
+        "มีรุ่นไหนแนะนำบ้าง"    → "สินค้าแนะนำ" (ห้ามส่งแค่ "รุ่น")
+        "มีรุ่นใหนแนะนำบ้าง"    → "สินค้าแนะนำ"
+        "มีอะไรขายบ้างครับ"     → "สินค้าแนะนำ" (หรือใช้ list_products)
         "อยากได้เคสไอโฟน"        → "เคส iPhone"
         "เคส iPhone 15 มีไหม"   → "เคส iPhone 15"
         "ช่วยหาหูฟังให้หน่อย"   → "หูฟัง"
@@ -194,7 +257,8 @@ def search_knowledge_base(query: str) -> str:
         "สายชาร์จเร็วมีไหม"     → "สายชาร์จเร็ว"
 
     Wrong — never pass these as `query`:
-        "แนะนำสินค้าให้หน่อย", "มีอะไรแนะนำบ้าง", "ช่วยค้นหาให้หน่อย"
+        "รุ่น", "แนะนำหน่อย", "มีอะไรบ้าง", "แนะนำสินค้าให้หน่อย",
+        "มีรุ่นไหนบ้าง", "ช่วยค้นหาให้หน่อย"
 
     For open-ended "recommend something" with no specific category, search with
     a broad catalog keyword such as "สินค้าแนะนำ" or "อุปกรณ์เสริมมือถือ", or
@@ -207,6 +271,7 @@ def search_knowledge_base(query: str) -> str:
     Returns:
         A formatted string listing relevant products and/or FAQ excerpts.
     """
+    query = _normalize_search_query(query)
     # Try Pinecone vector search first
     pinecone_results = _search_pinecone(query)
 

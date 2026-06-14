@@ -13,6 +13,18 @@ def test_prefetch_broad_catalog_question():
     assert "พบ" in ctx
 
 
+def test_prefetch_budget_browse_question():
+    ctx = build_catalog_prefetch("มีงบ 3000 ซื้ออะไรได้บ้าง")
+    assert ctx
+    assert "พบ" in ctx
+
+
+def test_prefetch_recommend_question():
+    ctx = build_catalog_prefetch("มีรุ่นใหนแนะนำบ้าง")
+    assert ctx
+    assert "พบ" in ctx
+
+
 def test_prefetch_single_iphone_case():
     ctx = build_catalog_prefetch("จะซื้อเคส iPhone 15 Pro Max")
     assert ctx

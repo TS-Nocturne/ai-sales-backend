@@ -9,6 +9,7 @@ Follows AGENTS.md guidelines:
 import json
 import logging
 import re
+import uuid
 
 from langchain_core.messages import (
     AIMessage,
@@ -40,7 +41,11 @@ from ai_sales.consts import (
 from ai_sales.messages.approval_reply import format_discount_decision_reply
 from ai_sales.state import SalesState
 from ai_sales.tools.catalog import find_product_price
-from ai_sales.tools.order_total import looks_like_transfer_intent, should_auto_generate_qr
+from ai_sales.tools.order_total import (
+    looks_like_cod_intent,
+    looks_like_transfer_intent,
+    should_auto_generate_qr,
+)
 from ai_sales.tools.sales_tools import all_tools, transfer_payment_qr_update
 
 logger = logging.getLogger(__name__)
@@ -106,6 +111,32 @@ _BROAD_CATALOG_MARKERS = (
     "แนะนำสินค้า",
     "มีของอะไร",
     "มีอะไรแนะนำ",
+    "แนะนำหน่อย",
+)
+
+_RECOMMEND_MARKERS = (
+    "มีรุ่นไหน",
+    "มีรุ่นใหน",
+    "รุ่นไหนบ้าง",
+    "รุ่นไหนแนะนำ",
+    "แนะนำบ้าง",
+    "มีอะไรแนะนำ",
+)
+
+_CLOSING_INTENT = re.compile(
+    r"(สนใจ|เอาอันนี้|เอาเลย|ต้องทำยังไง|สั่งยังไง|จะซื้อ|รับเลย|สั่งเลย|ซื้อยังไง)",
+    re.IGNORECASE,
+)
+
+_BUDGET_CEILING = re.compile(
+    r"(?:งบ(?:ประมาณ)?|budget|ไม่เกิน|ภายใน)\s*([\d,.]+)",
+    re.IGNORECASE,
+)
+
+_CONFUSED_REPLY_MARKERS = (
+    "ไม่แน่ใจ",
+    "ไม่เข้าใจ",
+    "ไม่ทราบว่า",
 )
 
 
@@ -115,6 +146,117 @@ def _looks_like_broad_catalog_query(text: str) -> bool:
     if not compact:
         return False
     return any(marker.replace(" ", "") in compact for marker in _BROAD_CATALOG_MARKERS)
+
+
+def _looks_like_recommend_query(text: str) -> bool:
+    """True when the customer asks which models/products to recommend."""
+    compact = re.sub(r"\s+", "", (text or "").lower())
+    if not compact:
+        return False
+    return any(marker.replace(" ", "") in compact for marker in _RECOMMEND_MARKERS)
+
+
+def _looks_like_budget_browse_query(text: str) -> bool:
+    """True for 'มีงบ X ซื้ออะไรได้บ้าง' style questions."""
+    compact = re.sub(r"\s+", "", (text or "").lower())
+    if not compact:
+        return False
+    has_budget = "งบ" in compact or "budget" in compact
+    has_browse = any(
+        w in compact for w in ("ซื้ออะไร", "ได้บ้าง", "แนะนำ", "อะไรได้")
+    )
+    return has_budget and has_browse
+
+
+def _extract_budget_ceiling(text: str) -> float:
+    match = _BUDGET_CEILING.search(text or "")
+    if not match:
+        return 0.0
+    raw = match.group(1).replace(",", "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 0.0
+    return value if value > 0 else 0.0
+
+
+def _browse_already_satisfied(messages: list) -> bool:
+    """True when catalog data was already fetched for the latest customer turn."""
+    last_human_idx = None
+    for idx in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[idx], HumanMessage):
+            last_human_idx = idx
+            break
+    if last_human_idx is None:
+        return False
+    for msg in messages[last_human_idx:]:
+        if isinstance(msg, ToolMessage):
+            text = _normalize_message_text(msg.content)
+            if "[Catalog]" in text or "[Vector Search]" in text:
+                return True
+    return False
+
+
+def _should_auto_browse_catalog(text: str) -> bool:
+    """Browse intents that must never end in 'ไม่เข้าใจ' — route to list_products."""
+    if not text or looks_like_transfer_intent(text) or looks_like_cod_intent(text):
+        return False
+    if _CLOSING_INTENT.search(text):
+        return False
+    return (
+        _looks_like_broad_catalog_query(text)
+        or _looks_like_recommend_query(text)
+        or _looks_like_budget_browse_query(text)
+    )
+
+
+def _browse_catalog_tool_call(customer_text: str) -> AIMessage:
+    """Emit a list_products tool call for vague browse / recommend / budget turns."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "list_products",
+                "args": {
+                    "category": "",
+                    "keyword": "",
+                    "min_price": 0,
+                    "max_price": _extract_budget_ceiling(customer_text),
+                    "sort_by_price": "",
+                },
+                "id": f"call_{uuid.uuid4().hex[:12]}",
+                "type": "tool_call",
+            }
+        ],
+    )
+
+
+def _closing_context_hint(messages: list) -> str:
+    """Inject a one-turn instruction when the customer signals purchase interest."""
+    last = _last_customer_text(messages)
+    if not last or not _CLOSING_INTENT.search(last):
+        return ""
+    for msg in reversed(messages[:-1] if len(messages) > 1 else messages):
+        if not isinstance(msg, AIMessage) or getattr(msg, "tool_calls", None):
+            continue
+        text = _normalize_message_text(msg.content)
+        if not text or any(text.startswith(p) for p in _INTERNAL_MESSAGE_PREFIXES):
+            continue
+        if "บาท" in text or any(
+            kw in text for kw in ("เคส", "ฟิล์ม", "สายชาร์จ", "หูฟัง", "iPhone", "iPad")
+        ):
+            return (
+                "คำสั่งเฉพาะเทิร์นนี้: ลูกค้าแสดงความสนใจหลังคุณเสนอสินค้าแล้ว "
+                "ห้ามถามรุ่นมือถือใหม่หรือเริ่มคุยใหม่ — ให้ถามว่าต้องการรับสินค้าชิ้นไหน "
+                "จากตัวเลือกที่เพิ่งเสนอ (ระบุชื่อและราคา) พร้อมแจ้งวิธีชำระเงิน "
+                "(โอน PromptPay / เก็บปลายทาง COD)"
+            )
+    return ""
+
+
+def _looks_like_confused_reply(text: str) -> bool:
+    low = (text or "").lower()
+    return any(marker in low for marker in _CONFUSED_REPLY_MARKERS)
 
 
 # Internal bookkeeping messages (lead scoring / approval) that are written into
@@ -273,9 +415,17 @@ def sales_agent_node(state: SalesState) -> dict:
 
     Returns only the updated messages key (AGENTS.md guideline).
     """
+    last_customer = _last_customer_text(state["messages"])
+
     # ลูกค้าเลือกโอนเงิน + มียอดในบทสนทนาแล้ว → สร้าง QR ทันที (ไม่พึ่ง LLM)
     if should_auto_generate_qr(state["messages"]):
         return transfer_payment_qr_update(state)
+
+    # คำถามกว้างๆ / แนะนำ / งบ+ซื้ออะไรได้ → list_products ทันที (ไม่รอ LLM)
+    if _should_auto_browse_catalog(last_customer) and not _browse_already_satisfied(
+        state["messages"]
+    ):
+        return {"messages": [_browse_catalog_tool_call(last_customer)]}
 
     # Strip internal bookkeeping (scoring/approval) so the model never sees —
     # and therefore never imitates — those blocks in its reply.
@@ -287,6 +437,9 @@ def sales_agent_node(state: SalesState) -> dict:
     memory_block = _memory_context_for_agent(state)
     if memory_block:
         system_text = f"{SALES_AGENT_SYSTEM_PROMPT}\n\n{memory_block}"
+    closing_hint = _closing_context_hint(state["messages"])
+    if closing_hint:
+        system_text = f"{system_text}\n\n{closing_hint}"
     prefetch = (state.get("catalog_prefetch") or "").strip()
     if prefetch:
         system_text = f"{system_text}\n\n{prefetch}"
@@ -312,28 +465,44 @@ def sales_agent_node(state: SalesState) -> dict:
         needs_forced_tool = (
             (text and _looks_like_search_filler(text))
             or (
-                _looks_like_broad_catalog_query(last_customer)
-                and not text.strip()
+                text
+                and _looks_like_confused_reply(text)
+                and _should_auto_browse_catalog(last_customer)
+                and not _browse_already_satisfied(state["messages"])
+            )
+            or (
+                _should_auto_browse_catalog(last_customer)
+                and not _browse_already_satisfied(state["messages"])
             )
         )
         if needs_forced_tool:
-            forced_llm = get_llm_with_tools_forced(all_tools)
-            response = forced_llm.invoke(messages_with_system)
+            if _should_auto_browse_catalog(last_customer):
+                response = _browse_catalog_tool_call(last_customer)
+            else:
+                forced_llm = get_llm_with_tools_forced(all_tools)
+                response = forced_llm.invoke(messages_with_system)
             if not getattr(response, "tool_calls", None):
                 if last_customer and looks_like_transfer_intent(last_customer):
                     if should_auto_generate_qr(state["messages"]):
                         return transfer_payment_qr_update(state)
+                if _should_auto_browse_catalog(last_customer):
+                    response = _browse_catalog_tool_call(last_customer)
         elif not text.strip():
-            # Never end the turn silently — an empty reply makes the channel
-            # show a generic error. Ask the customer to clarify instead.
-            response = AIMessage(
-                content=(
-                    "ขออภัยค่ะ ไม่แน่ใจว่าหมายถึงสินค้าหรือเรื่องใด "
-                    "รบกวนพิมพ์ใหม่อีกครั้งได้ไหมคะ 🙏 "
-                    "เช่น แจ้งชื่อสินค้า รุ่นมือถือ หรืองบประมาณที่ต้องการ "
-                    "เดี๋ยวทางร้านช่วยแนะนำให้ค่ะ"
+            if _should_auto_browse_catalog(last_customer) and not _browse_already_satisfied(
+                state["messages"]
+            ):
+                response = _browse_catalog_tool_call(last_customer)
+            else:
+                # Never end the turn silently — an empty reply makes the channel
+                # show a generic error. Ask the customer to clarify instead.
+                response = AIMessage(
+                    content=(
+                        "ขออภัยค่ะ ไม่แน่ใจว่าหมายถึงสินค้าหรือเรื่องใด "
+                        "รบกวนพิมพ์ใหม่อีกครั้งได้ไหมคะ 🙏 "
+                        "เช่น แจ้งชื่อสินค้า รุ่นมือถือ หรืองบประมาณที่ต้องการ "
+                        "เดี๋ยวทางร้านช่วยแนะนำให้ค่ะ"
+                    )
                 )
-            )
 
     return {"messages": [response]}
 

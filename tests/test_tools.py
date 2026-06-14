@@ -16,6 +16,14 @@ def test_search_knowledge_base_no_match(monkeypatch):
     assert "No relevant information found" in result
 
 
+def test_normalize_search_query_rewrites_vague_phrases():
+    import ai_sales.tools.sales_tools as sales_tools
+
+    assert sales_tools._normalize_search_query("มีรุ่นใหนแนะนำบ้าง") == "สินค้าแนะนำ"
+    assert sales_tools._normalize_search_query("รุ่น") == "สินค้าแนะนำ"
+    assert sales_tools._normalize_search_query("เคส iPhone 15") == "เคส iPhone 15"
+
+
 def test_list_products_budget_ceiling_not_exact_price():
     """งบ 30,000 must not be treated as exact price (min=max bug)."""
     result = list_products.invoke(
