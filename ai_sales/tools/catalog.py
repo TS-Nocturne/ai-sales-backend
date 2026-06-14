@@ -5,21 +5,25 @@ Source of truth is PostgreSQL, owned by the Next.js dashboard (the Inventory
 Sync writes products there). This brain has no DB driver by design, so it reads
 the *live* catalog over HTTP from the dashboard's internal endpoint
 (``CATALOG_API_URL``) and caches it briefly. If the dashboard is unreachable or
-not configured, it falls back to the bundled ``documents/sample_product.csv`` so
-local development and tests keep working offline.
+not configured, it falls back to the bundled ``ai_sales/data/sample_product.csv``
+(shipped inside the Docker image) or ``documents/sample_product.csv`` for local dev.
 """
 
 import csv
+import json
+import logging
 import os
 import time
 
 import urllib.error
 import urllib.request
-import json
 
-# Get path relative to the project root
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_CSV_PATH = os.path.join(_BASE_DIR, "documents", "sample_product.csv")
+logger = logging.getLogger(__name__)
+
+_AI_SALES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(_AI_SALES_DIR)
+_BUNDLED_CSV = os.path.join(_AI_SALES_DIR, "data", "sample_product.csv")
+_DEV_CSV = os.path.join(_PROJECT_ROOT, "documents", "sample_product.csv")
 
 # Cache the resolved catalog for a short window so repeated tool calls within a
 # conversation do not hammer the dashboard. Set to 0 to disable caching.
@@ -59,7 +63,7 @@ def _load_from_api() -> list[dict] | None:
         with urllib.request.urlopen(request, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-        print(f"Warning: live catalog fetch failed ({exc}); using CSV fallback.")
+        logger.warning("Live catalog fetch failed (%s); using CSV fallback.", exc)
         return None
 
     products = payload.get("products")
@@ -70,15 +74,29 @@ def _load_from_api() -> list[dict] | None:
 
 def _load_from_csv() -> list[dict]:
     """Load the bundled sample catalog from CSV (offline fallback)."""
-    catalog: list[dict] = []
-    try:
-        with open(_CSV_PATH, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                catalog.append(_coerce_product(row))
-    except Exception as exc:
-        print(f"Warning: Failed to load product catalog CSV: {exc}")
-    return catalog
+    for path in (_BUNDLED_CSV, _DEV_CSV):
+        if not os.path.isfile(path):
+            continue
+        catalog: list[dict] = []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    catalog.append(_coerce_product(row))
+        except OSError as exc:
+            logger.warning("Failed to load product catalog CSV %s: %s", path, exc)
+            continue
+        if catalog:
+            logger.info("Loaded %s products from catalog CSV: %s", len(catalog), path)
+            return catalog
+
+    logger.error(
+        "Product catalog CSV not found (tried %s, %s). "
+        "Set CATALOG_API_URL for live inventory.",
+        _BUNDLED_CSV,
+        _DEV_CSV,
+    )
+    return []
 
 
 def get_product_catalog(force_refresh: bool = False) -> list[dict]:

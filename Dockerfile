@@ -10,6 +10,7 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-interaction --no-ansi --only main --no-root
 
 COPY ai_sales ./ai_sales
+# sample_product.csv is bundled at ai_sales/data/ (offline catalog fallback in Docker)
 RUN poetry install --no-interaction --no-ansi --only main
 
 ENV PYTHONUNBUFFERED=1 \
