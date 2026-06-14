@@ -40,6 +40,23 @@ _PURE_CATALOG_BROWSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Known English catalog categories → Thai labels for tool output.
+# Unknown names are passed through with a hint so the LLM translates naturally.
+CATEGORY_TH_MAP: dict[str, str] = {
+    "Case": "เคส",
+    "Cable": "สายชาร์จ",
+    "Screen Protector": "ฟิล์มกันรอย",
+    "Charger": "หัวชาร์จ",
+    "Power Bank": "แบตสำรอง",
+    "Audio": "หูฟัง",
+    "Car Accessories": "อุปกรณ์รถยนต์",
+    "Adapter": "อะแดปเตอร์/ฮับ",
+    "Accessories": "อุปกรณ์เสริม",
+    "อื่นๆ": "อื่นๆ",
+}
+
+_CATEGORY_TRANSLATE_HINT = "(กรุณาแปลเป็นภาษาไทยให้เป็นธรรมชาติก่อนบอกลูกค้า)"
+
 _BROAD_BROWSE_QUERIES = frozenset(
     {
         "สินค้าแนะนำ",
@@ -311,14 +328,26 @@ def _catalog_categories() -> list[dict]:
     return [{"category": name, "count": count} for name, count in sorted(counts.items())]
 
 
+def _format_category_label(raw: str) -> str:
+    """Map known category names to Thai; ask the LLM to translate unknown English."""
+    key = (raw or "").strip() or "อื่นๆ"
+    if key in CATEGORY_TH_MAP:
+        return CATEGORY_TH_MAP[key]
+    if re.search(r"[\u0e00-\u0e7f]", key):
+        return key
+    return f"{key} {_CATEGORY_TRANSLATE_HINT}"
+
+
 def _format_category_overview(categories: list[dict]) -> str:
     lines = [
         "[หมวดหมู่สินค้า] ร้านมีสินค้าหลายหมวด — ถามลูกค้าว่าสนใจหมวดไหน:",
     ]
     for row in categories:
-        lines.append(f"• {row['category']} ({row['count']} รายการ)")
+        label = _format_category_label(row["category"])
+        lines.append(f"• {label} ({row['count']} รายการ)")
     lines.append(
-        "คำสั่ง: ตอบสั้นๆ แนะนำหมวดหมู่ ห้ามไล่รายการสินค้าทุกชิ้น "
+        "คำสั่ง: หมวดที่มีคำกำกับแปล ให้แปลเป็นภาษาไทยธรรมชาติก่อนบอกลูกค้า — "
+        "ตอบสั้นๆ แนะนำหมวดหมู่ ห้ามไล่รายการสินค้าทุกชิ้น "
         "รอให้ลูกค้าเลือกหมวดก่อน แล้วค่อยเรียก list_products ด้วย category"
     )
     return "\n".join(lines)
@@ -602,6 +631,30 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     return (
         f"No relevant information found for '{query}'. "
         "Try searching with broader terms or different keywords."
+    )
+
+
+@tool
+def list_product_categories() -> str:
+    """List all product categories available in the shop catalog.
+
+    Use when the customer asks broadly what the shop sells or which categories
+    are available (e.g. "มีอะไรขายบ้าง"). Known English category names are
+    pre-translated to Thai; any new/unmapped name is returned in English with
+    a note asking you to translate it naturally before telling the customer.
+
+    Returns:
+        Comma-separated category labels with optional translation hints.
+    """
+    categories = _catalog_categories()
+    if not categories:
+        return "หมวดหมู่ที่มี: (ยังไม่มีสินค้าในคลัง)"
+
+    formatted = [_format_category_label(row["category"]) for row in categories]
+    return (
+        f"หมวดหมู่ที่มี: {', '.join(formatted)}\n"
+        "คำสั่ง: หมวดที่มีคำกำกับแปล ให้แปลเป็นภาษาไทยธรรมชาติก่อนบอกลูกค้า "
+        "แล้วถามว่าสนใจหมวดไหน"
     )
 
 
@@ -990,6 +1043,7 @@ def request_overpay_refund(
 # List of all tools for binding to the LLM
 all_tools = [
     search_knowledge_base,
+    list_product_categories,
     calculate_discount,
     list_products,
     generate_promptpay_qr,

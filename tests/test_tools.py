@@ -137,6 +137,40 @@ def test_list_products_pure_browse_returns_categories():
     )
     assert "[หมวดหมู่สินค้า]" in result
     assert "รายการ)" in result
+    assert "เคส" in result or "สายชาร์จ" in result
+
+
+def test_format_category_label_known_and_unknown():
+    import ai_sales.tools.sales_tools as sales_tools
+
+    assert sales_tools._format_category_label("Case") == "เคส"
+    assert sales_tools._format_category_label("Cable") == "สายชาร์จ"
+    unknown = sales_tools._format_category_label("Smartwatch")
+    assert "Smartwatch" in unknown
+    assert "กรุณาแปล" in unknown
+    assert sales_tools._format_category_label("เคสมือถือ") == "เคสมือถือ"
+
+
+def test_list_product_categories_translates_known_and_hints_unknown(monkeypatch):
+    import ai_sales.tools.sales_tools as sales_tools
+
+    monkeypatch.setattr(
+        sales_tools,
+        "_catalog_categories",
+        lambda: [
+            {"category": "Case", "count": 2},
+            {"category": "Cable", "count": 1},
+            {"category": "Smartwatch", "count": 3},
+        ],
+    )
+    from ai_sales.tools.sales_tools import list_product_categories
+
+    result = list_product_categories.invoke({})
+    assert "เคส" in result
+    assert "สายชาร์จ" in result
+    assert "Smartwatch" in result
+    assert "กรุณาแปล" in result
+    assert result.startswith("หมวดหมู่ที่มี:")
 
 
 def test_list_products_respects_limit():
