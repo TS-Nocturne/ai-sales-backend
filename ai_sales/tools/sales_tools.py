@@ -17,6 +17,7 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from ai_sales.config.category_labels import category_label
 from ai_sales.consts import (
     LIST_PRODUCTS_DEFAULT_LIMIT,
     LIST_PRODUCTS_MAX_LIMIT,
@@ -39,23 +40,6 @@ _PURE_CATALOG_BROWSE_RE = re.compile(
     r"สินค้ามีอะไร|ดูสินค้า|มีของอะไร",
     re.IGNORECASE,
 )
-
-# Known English catalog categories → Thai labels for tool output.
-# Unknown names are passed through with a hint so the LLM translates naturally.
-CATEGORY_TH_MAP: dict[str, str] = {
-    "Case": "เคส",
-    "Cable": "สายชาร์จ",
-    "Screen Protector": "ฟิล์มกันรอย",
-    "Charger": "หัวชาร์จ",
-    "Power Bank": "แบตสำรอง",
-    "Audio": "หูฟัง",
-    "Car Accessories": "อุปกรณ์รถยนต์",
-    "Adapter": "อะแดปเตอร์/ฮับ",
-    "Accessories": "อุปกรณ์เสริม",
-    "อื่นๆ": "อื่นๆ",
-}
-
-_CATEGORY_TRANSLATE_HINT = "(กรุณาแปลเป็นภาษาไทยให้เป็นธรรมชาติก่อนบอกลูกค้า)"
 
 _BROAD_BROWSE_QUERIES = frozenset(
     {
@@ -329,13 +313,8 @@ def _catalog_categories() -> list[dict]:
 
 
 def _format_category_label(raw: str) -> str:
-    """Map known category names to Thai; ask the LLM to translate unknown English."""
-    key = (raw or "").strip() or "อื่นๆ"
-    if key in CATEGORY_TH_MAP:
-        return CATEGORY_TH_MAP[key]
-    if re.search(r"[\u0e00-\u0e7f]", key):
-        return key
-    return f"{key} {_CATEGORY_TRANSLATE_HINT}"
+    """Return fixed Thai label from CATEGORY_TH_MAP (see config/category_labels.py)."""
+    return category_label(raw)
 
 
 def _format_category_overview(categories: list[dict]) -> str:
@@ -346,8 +325,7 @@ def _format_category_overview(categories: list[dict]) -> str:
         label = _format_category_label(row["category"])
         lines.append(f"• {label} ({row['count']} รายการ)")
     lines.append(
-        "คำสั่ง: หมวดที่มีคำกำกับแปล ให้แปลเป็นภาษาไทยธรรมชาติก่อนบอกลูกค้า — "
-        "ตอบสั้นๆ แนะนำหมวดหมู่ ห้ามไล่รายการสินค้าทุกชิ้น "
+        "คำสั่ง: ตอบสั้นๆ แนะนำหมวดหมู่ ห้ามไล่รายการสินค้าทุกชิ้น "
         "รอให้ลูกค้าเลือกหมวดก่อน แล้วค่อยเรียก list_products ด้วย category"
     )
     return "\n".join(lines)
@@ -356,9 +334,10 @@ def _format_category_overview(categories: list[dict]) -> str:
 def _format_product_compact(product: dict) -> str:
     price = float(product.get("price", 0) or 0)
     stock = "มีสินค้า" if int(product.get("stock", 0) or 0) > 0 else "สินค้าหมด"
+    cat_label = _format_category_label(str(product.get("category", "N/A")))
     return (
         f"- {product.get('name', 'N/A')} | ราคา {price:.0f} บาท "
-        f"| หมวด: {product.get('category', 'N/A')} | {stock}"
+        f"| หมวด: {cat_label} | {stock}"
     )
 
 
@@ -639,12 +618,11 @@ def list_product_categories() -> str:
     """List all product categories available in the shop catalog.
 
     Use when the customer asks broadly what the shop sells or which categories
-    are available (e.g. "มีอะไรขายบ้าง"). Known English category names are
-    pre-translated to Thai; any new/unmapped name is returned in English with
-    a note asking you to translate it naturally before telling the customer.
+    are available (e.g. "มีอะไรขายบ้าง"). Category names are pre-translated to
+    fixed Thai labels via CATEGORY_TH_MAP in config/category_labels.py.
 
     Returns:
-        Comma-separated category labels with optional translation hints.
+        Comma-separated Thai category labels.
     """
     categories = _catalog_categories()
     if not categories:
@@ -653,8 +631,7 @@ def list_product_categories() -> str:
     formatted = [_format_category_label(row["category"]) for row in categories]
     return (
         f"หมวดหมู่ที่มี: {', '.join(formatted)}\n"
-        "คำสั่ง: หมวดที่มีคำกำกับแปล ให้แปลเป็นภาษาไทยธรรมชาติก่อนบอกลูกค้า "
-        "แล้วถามว่าสนใจหมวดไหน"
+        "คำสั่ง: ตอบสั้นๆ แนะนำหมวดหมู่ แล้วถามว่าสนใจหมวดไหน"
     )
 
 
