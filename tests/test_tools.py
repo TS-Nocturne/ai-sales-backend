@@ -141,17 +141,16 @@ def test_list_products_pure_browse_returns_categories():
 
 
 def test_format_category_label_known_and_unknown():
-    import ai_sales.tools.sales_tools as sales_tools
+    import ai_sales.config.category_labels as labels
 
-    assert sales_tools._format_category_label("Case") == "เคส"
-    assert sales_tools._format_category_label("Cable") == "สายชาร์จ"
-    unknown = sales_tools._format_category_label("Smartwatch")
-    assert "Smartwatch" in unknown
-    assert "กรุณาแปล" in unknown
-    assert sales_tools._format_category_label("เคสมือถือ") == "เคสมือถือ"
+    assert labels.category_label("Case") == "เคส"
+    assert labels.category_label("Cable") == "สายชาร์จ"
+    assert labels.category_label("Smartwatch") == "สมาร์ทวอทช์"
+    assert labels.category_label("เคสมือถือ") == "เคสมือถือ"
+    assert labels.category_label("BrandNewGadget") == labels.DEFAULT_CATEGORY_TH
 
 
-def test_list_product_categories_translates_known_and_hints_unknown(monkeypatch):
+def test_list_product_categories_translates_known_fixed(monkeypatch):
     import ai_sales.tools.sales_tools as sales_tools
 
     monkeypatch.setattr(
@@ -168,8 +167,8 @@ def test_list_product_categories_translates_known_and_hints_unknown(monkeypatch)
     result = list_product_categories.invoke({})
     assert "เคส" in result
     assert "สายชาร์จ" in result
-    assert "Smartwatch" in result
-    assert "กรุณาแปล" in result
+    assert "สมาร์ทวอทช์" in result
+    assert "กรุณาแปล" not in result
     assert result.startswith("หมวดหมู่ที่มี:")
 
 
