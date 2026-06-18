@@ -10,6 +10,7 @@ LEAD_SCORER = "lead_scorer"
 HUMAN_APPROVAL = "human_approval_node"
 POST_APPROVAL = "post_approval_node"
 CONTEXT_SUMMARIZER = "context_summarizer_node"
+HANDOFF = "handoff_node"
 
 # Routing targets
 ROUTE_END = "__end__"

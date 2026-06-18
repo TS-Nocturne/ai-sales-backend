@@ -16,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from ai_sales.consts import (
     CONTEXT_SUMMARIZER,
+    HANDOFF,
     HUMAN_APPROVAL,
     LEAD_SCORER,
     POST_APPROVAL,
@@ -25,13 +26,14 @@ from ai_sales.consts import (
 )
 from ai_sales.nodes.agent_nodes import (
     context_summarizer_node,
+    handoff_node,
     human_approval_node,
     lead_scorer_node,
     post_approval_node,
     sales_agent_node,
     tool_executor_node,
 )
-from ai_sales.nodes.routing import route_after_agent, route_after_scoring
+from ai_sales.nodes.routing import route_after_agent, route_after_scoring, route_after_summarizer
 from ai_sales.state import SalesState
 
 # Load environment variables
@@ -58,6 +60,7 @@ def build_graph(pool):
     workflow = StateGraph(SalesState)
 
     workflow.add_node(CONTEXT_SUMMARIZER, context_summarizer_node)
+    workflow.add_node(HANDOFF, handoff_node)
     workflow.add_node(SALES_AGENT, sales_agent_node)
     workflow.add_node(TOOL_EXECUTOR, tool_executor_node)
     workflow.add_node(LEAD_SCORER, lead_scorer_node)
@@ -67,7 +70,15 @@ def build_graph(pool):
     # Compact long histories before the agent runs (token/memory saver), then
     # hand off to the sales agent. Tool loops return to the agent directly.
     workflow.set_entry_point(CONTEXT_SUMMARIZER)
-    workflow.add_edge(CONTEXT_SUMMARIZER, SALES_AGENT)
+    workflow.add_conditional_edges(
+        CONTEXT_SUMMARIZER,
+        route_after_summarizer,
+        {
+            HANDOFF: HANDOFF,
+            SALES_AGENT: SALES_AGENT,
+        },
+    )
+    workflow.add_edge(HANDOFF, END)
 
     workflow.add_conditional_edges(
         SALES_AGENT,
