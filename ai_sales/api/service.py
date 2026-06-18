@@ -29,6 +29,7 @@ from ai_sales.channels import line_delivery
 from ai_sales.consts import HUMAN_APPROVAL
 from ai_sales.db_config import get_database_url, pool_max_size, warn_if_not_neon_pooler
 from ai_sales.graph.builder import build_graph
+from ai_sales.handoff import looks_like_handoff_intent
 from ai_sales.messages.approval_reply import format_discount_decision_reply
 from ai_sales.prefetch import build_catalog_prefetch
 from ai_sales.state import initial_state
@@ -245,6 +246,8 @@ def _snapshot(graph, thread: dict) -> dict:
         "overpay_resolution": values.get("overpay_resolution") or None,
         "overpay_credit_amount": values.get("overpay_credit_amount") or 0,
         "awaiting_refund_approval": bool(values.get("awaiting_refund_approval")),
+        "handoff_requested": bool(values.get("handoff_requested")),
+        "handoff_reason": (values.get("handoff_reason") or "").strip() or None,
     }
 
 
@@ -286,7 +289,9 @@ def send_message(
         else:
             existing = graph.get_state(thread).values
             summary = (existing.get("conversation_summary") or "").strip()
-        payload["catalog_prefetch"] = build_catalog_prefetch(message, summary)
+        payload["catalog_prefetch"] = (
+            "" if looks_like_handoff_intent(message) else build_catalog_prefetch(message, summary)
+        )
 
         def _run() -> None:
             graph.invoke(payload, thread)

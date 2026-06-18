@@ -7,13 +7,23 @@ Follows AGENTS.md guidelines:
 """
 
 from ai_sales.consts import (
+    HANDOFF,
     HUMAN_APPROVAL,
     LEAD_SCORER,
     MAX_TOOL_ITERATIONS,
     ROUTE_END,
+    SALES_AGENT,
     TOOL_EXECUTOR,
 )
+from ai_sales.handoff import last_customer_text, looks_like_handoff_intent
 from ai_sales.state import SalesState
+
+
+def route_after_summarizer(state: SalesState) -> str:
+    """Route human-handoff requests before the sales agent can pitch products."""
+    if looks_like_handoff_intent(last_customer_text(state["messages"])):
+        return HANDOFF
+    return SALES_AGENT
 
 
 def route_after_agent(state: SalesState) -> str:

@@ -44,6 +44,9 @@ class SalesState(MessagesState):
     conversation_summary: str  # rolling summary of older messages (token saver)
     # One-shot live catalog snapshot injected before the agent runs this turn
     catalog_prefetch: str
+    # Human handoff — customer asked for staff; dashboard pauses the bot
+    handoff_requested: bool
+    handoff_reason: str
 
 
 def initial_state(**overrides) -> dict:
@@ -63,6 +66,8 @@ def initial_state(**overrides) -> dict:
         "awaiting_refund_approval": False,
         "conversation_summary": "",
         "catalog_prefetch": "",
+        "handoff_requested": False,
+        "handoff_reason": "",
     }
     defaults.update(overrides)
     return defaults

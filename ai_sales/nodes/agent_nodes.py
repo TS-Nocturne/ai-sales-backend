@@ -46,6 +46,12 @@ from ai_sales.tools.order_total import (
     looks_like_transfer_intent,
     should_auto_generate_qr,
 )
+from ai_sales.handoff import (
+    HANDOFF_REPLY,
+    handoff_reason_from_text,
+    looks_like_handoff_intent,
+)
+
 from ai_sales.tools.sales_tools import all_tools, _is_pure_catalog_browse, transfer_payment_qr_update
 
 logger = logging.getLogger(__name__)
@@ -419,12 +425,30 @@ def context_summarizer_node(state: SalesState) -> dict:
     }
 
 
+def handoff_node(state: SalesState) -> dict:
+    """Escalate to human staff — no catalog search or sales pitch."""
+    last_customer = _last_customer_text(state["messages"])
+    return {
+        "messages": [AIMessage(content=HANDOFF_REPLY)],
+        "handoff_requested": True,
+        "handoff_reason": handoff_reason_from_text(last_customer),
+    }
+
+
 def sales_agent_node(state: SalesState) -> dict:
     """Main sales agent node. Invokes the LLM with tools to handle customer interaction.
 
     Returns only the updated messages key (AGENTS.md guideline).
     """
     last_customer = _last_customer_text(state["messages"])
+
+    # ลูกค้าขอคุยกับเจ้าหน้าที่ — หยุดขายทันที (safety net ถ้า router ไม่ดัก)
+    if looks_like_handoff_intent(last_customer):
+        return {
+            "messages": [AIMessage(content=HANDOFF_REPLY)],
+            "handoff_requested": True,
+            "handoff_reason": handoff_reason_from_text(last_customer),
+        }
 
     # ลูกค้าเลือกโอนเงิน + มียอดในบทสนทนาแล้ว → สร้าง QR ทันที (ไม่พึ่ง LLM)
     if should_auto_generate_qr(state["messages"]):

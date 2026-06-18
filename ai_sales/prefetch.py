@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from ai_sales.consts import PREFETCH_DISPLAY_LIMIT
+from ai_sales.handoff import looks_like_handoff_intent
 from ai_sales.tools.catalog import get_product_catalog
 from ai_sales.tools.sales_tools import (
     _catalog_browse_fallback,
@@ -165,6 +166,8 @@ def build_catalog_prefetch(message: str, conversation_summary: str = "") -> str:
     """Return a catalog snapshot for the system prompt, or empty if not needed."""
     message = (message or "").strip()
     summary = (conversation_summary or "").strip()
+    if looks_like_handoff_intent(message):
+        return ""
     if not _looks_like_product_turn(message, summary):
         return ""
 
