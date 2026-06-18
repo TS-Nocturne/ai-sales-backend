@@ -26,6 +26,7 @@ from ai_sales.consts import (
     VECTOR_TOP_K,
 )
 from ai_sales.channels import line_delivery
+from ai_sales.knowledge.technical_reference import format_technical_reference
 from ai_sales.payments import qr as payment_qr
 from ai_sales.payments import slip2go
 from ai_sales.tools.catalog import get_product_catalog
@@ -500,7 +501,8 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     """Search the knowledge base for products, pricing, features, or FAQ answers.
 
     Use this tool when the customer asks about available products, pricing,
-    policies, shipping, warranties, returns, or any general questions.
+    policies, shipping, warranties, returns, technical specs (IP rating,
+    waterproof standards, Bluetooth/codec), or any general questions.
     Pass product/category keywords in `query` and budget (if any) in `max_price`
     — never combine them into one string like "สายชาร์จ 30000".
 
@@ -515,6 +517,8 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
         "แนะนำสินค้าให้หน่อย"         → query="สินค้าแนะนำ"
         "มีรุ่นไหนแนะนำบ้าง"          → query="สินค้าแนะนำ" (ห้ามส่งแค่ "รุ่น")
         "เคส iPhone 15 มีไหม"         → query="เคส iPhone 15"
+        "IPX4 ประมาณไหน"             → query="IPX4 กันน้ำ"
+        "สเปก Bluetooth 5.3"          → query="Bluetooth 5.3"
         "นโยบายการคืนเงิน"           → query="นโยบายคืนเงิน"
 
     Wrong — never do this:
@@ -600,6 +604,13 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
                 query,
             )
             return _format_catalog_fallback_response(fallback, query, budget_note)
+
+    technical = format_technical_reference(raw_query) or format_technical_reference(query)
+    if technical:
+        logger.info(
+            "search_knowledge_base technical reference query=%r", query
+        )
+        return technical
 
     logger.info("search_knowledge_base miss query=%r max_price=%s", query, max_price)
     if max_price and max_price > 0:

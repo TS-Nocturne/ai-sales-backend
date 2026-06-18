@@ -23,6 +23,7 @@ from ai_sales.tools.catalog import get_product_catalog
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _FAQ_PATH = os.path.join(_BASE_DIR, "documents", "CustomerFAQ.pdf")
+_TECH_STANDARDS_PATH = os.path.join(_BASE_DIR, "documents", "technical_standards.txt")
 
 
 def _product_to_text(product: dict) -> str:
@@ -94,6 +95,32 @@ def seed():
             })
     except Exception as e:
         print(f"  Warning: Failed to process FAQ PDF: {e}")
+
+    # 3. Technical standards reference (IP, Bluetooth, etc.)
+    print(f"  Loading technical reference from {_TECH_STANDARDS_PATH}...")
+    try:
+        with open(_TECH_STANDARDS_PATH, encoding="utf-8") as fh:
+            tech_text = fh.read().strip()
+        if tech_text:
+            tech_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=500,
+                chunk_overlap=50,
+                separators=["\n\n", "\n", ".", " ", ""],
+            )
+            tech_chunks = tech_splitter.split_text(tech_text)
+            print(f"  Split technical reference into {len(tech_chunks)} chunks.")
+            for i, chunk in enumerate(tech_chunks):
+                texts.append(chunk)
+                ids.append(f"tech_{uuid4().hex[:8]}")
+                metadatas.append({
+                    "source_type": "knowledge",
+                    "text": chunk,
+                    "title": "Technical Standards Reference",
+                    "source": "technical_standards.txt",
+                    "page": i,
+                })
+    except Exception as e:
+        print(f"  Warning: Failed to process technical standards: {e}")
 
     if not texts:
         print("  No data to seed. Exiting.")
