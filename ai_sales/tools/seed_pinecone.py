@@ -53,46 +53,48 @@ def seed():
     # 1. Process Products
     catalog = get_product_catalog()
     print(f"  Loaded {len(catalog)} products from CSV.")
-    
+
     for product in catalog:
         text = _product_to_text(product)
         texts.append(text)
         ids.append(f"prod_{product['id']}")
-        metadatas.append({
-            "source_type": "product",
-            "id": product["id"],
-            "name": product["name"],
-            "price": product["price"],
-            "category": product["category"],
-            "description": product["description"],
-            "stock": product["stock"],
-            "warranty": product["warranty_period"],
-            "text": text,
-        })
+        metadatas.append(
+            {
+                "source_type": "product",
+                "id": product["id"],
+                "name": product["name"],
+                "price": product["price"],
+                "category": product["category"],
+                "description": product["description"],
+                "stock": product["stock"],
+                "warranty": product["warranty_period"],
+                "text": text,
+            }
+        )
 
     # 2. Process FAQ PDF
     print(f"  Loading FAQ from {_FAQ_PATH}...")
     try:
         loader = PyPDFLoader(_FAQ_PATH)
         documents = loader.load()
-        
+
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            separators=["\n\n", "\n", ".", " ", ""]
+            chunk_size=500, chunk_overlap=50, separators=["\n\n", "\n", ".", " ", ""]
         )
         faq_chunks = text_splitter.split_documents(documents)
         print(f"  Split FAQ into {len(faq_chunks)} chunks.")
-        
+
         for i, chunk in enumerate(faq_chunks):
             texts.append(chunk.page_content)
             ids.append(f"faq_{uuid4().hex[:8]}")
-            metadatas.append({
-                "source_type": "faq",
-                "text": chunk.page_content,
-                "source": chunk.metadata.get("source", "CustomerFAQ.pdf"),
-                "page": chunk.metadata.get("page", 0)
-            })
+            metadatas.append(
+                {
+                    "source_type": "faq",
+                    "text": chunk.page_content,
+                    "source": chunk.metadata.get("source", "CustomerFAQ.pdf"),
+                    "page": chunk.metadata.get("page", 0),
+                }
+            )
     except Exception as e:
         print(f"  Warning: Failed to process FAQ PDF: {e}")
 
@@ -112,13 +114,15 @@ def seed():
             for i, chunk in enumerate(tech_chunks):
                 texts.append(chunk)
                 ids.append(f"tech_{uuid4().hex[:8]}")
-                metadatas.append({
-                    "source_type": "knowledge",
-                    "text": chunk,
-                    "title": "Technical Standards Reference",
-                    "source": "technical_standards.txt",
-                    "page": i,
-                })
+                metadatas.append(
+                    {
+                        "source_type": "knowledge",
+                        "text": chunk,
+                        "title": "Technical Standards Reference",
+                        "source": "technical_standards.txt",
+                        "page": i,
+                    }
+                )
     except Exception as e:
         print(f"  Warning: Failed to process technical standards: {e}")
 
@@ -128,23 +132,27 @@ def seed():
 
     # Upsert in batches to avoid payload limits
     BATCH_SIZE = 100
-    print(f"\n  Generating embeddings and upserting {len(texts)} vectors in batches of {BATCH_SIZE}...")
-    
+    print(
+        f"\n  Generating embeddings and upserting {len(texts)} vectors in batches of {BATCH_SIZE}..."
+    )
+
     for i in range(0, len(texts), BATCH_SIZE):
-        batch_texts = texts[i:i+BATCH_SIZE]
-        batch_ids = ids[i:i+BATCH_SIZE]
-        batch_metadatas = metadatas[i:i+BATCH_SIZE]
-        
+        batch_texts = texts[i : i + BATCH_SIZE]
+        batch_ids = ids[i : i + BATCH_SIZE]
+        batch_metadatas = metadatas[i : i + BATCH_SIZE]
+
         vectors = embeddings.embed_documents(batch_texts)
-        
+
         records = []
         for vec_id, vector, metadata in zip(batch_ids, vectors, batch_metadatas):
-            records.append({
-                "id": vec_id,
-                "values": vector,
-                "metadata": metadata,
-            })
-            
+            records.append(
+                {
+                    "id": vec_id,
+                    "values": vector,
+                    "metadata": metadata,
+                }
+            )
+
         index.upsert(vectors=records)
         print(f"    Upserted batch {i//BATCH_SIZE + 1} ({len(records)} items)")
 

@@ -4,7 +4,10 @@ from ai_sales.tools.catalog import find_product_price, get_product_catalog
 
 
 def test_find_product_price_exact_match():
-    assert find_product_price("เคสใสกันกระแทก Crystal Clear สำหรับ iPhone 15 Pro Max") == 490.0
+    assert (
+        find_product_price("เคสใสกันกระแทก Crystal Clear สำหรับ iPhone 15 Pro Max")
+        == 490.0
+    )
 
 
 def test_find_product_price_partial_match():

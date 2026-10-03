@@ -89,7 +89,9 @@ def _secret() -> str:
     return secret
 
 
-def _request(method: str, path: str, body: dict | None = None, timeout: int = 30) -> dict:
+def _request(
+    method: str, path: str, body: dict | None = None, timeout: int = 30
+) -> dict:
     """Call Slip2Go and return the parsed JSON response."""
     url = f"{_base_url()}{path}"
     headers = {"Authorization": f"Bearer {_secret()}"}
@@ -137,20 +139,14 @@ def build_check_condition(
     condition: dict = {}
     if check_duplicate:
         condition["checkDuplicate"] = True
-    code = normalize_promptpay_code(
-        prompt_pay_code or os.getenv("PROMPTPAY_CODE")
-    )
-    ptype = normalize_promptpay_type(
-        prompt_pay_type or os.getenv("PROMPTPAY_TYPE")
-    )
+    code = normalize_promptpay_code(prompt_pay_code or os.getenv("PROMPTPAY_CODE"))
+    ptype = normalize_promptpay_type(prompt_pay_type or os.getenv("PROMPTPAY_TYPE"))
     if code:
         condition["checkReceiver"] = [{"type": ptype, "number": code}]
     return condition
 
 
-def verify_slip_base64(
-    image_base64: str, check_condition: dict | None = None
-) -> dict:
+def verify_slip_base64(image_base64: str, check_condition: dict | None = None) -> dict:
     """Verify a bank-transfer slip from a Base64-encoded image.
 
     Args:

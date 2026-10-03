@@ -2,8 +2,19 @@
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from ai_sales.consts import HUMAN_APPROVAL, LEAD_SCORER, ROUTE_END, TOOL_EXECUTOR, HANDOFF, SALES_AGENT
-from ai_sales.nodes.routing import route_after_agent, route_after_scoring, route_after_summarizer
+from ai_sales.consts import (
+    HANDOFF,
+    HUMAN_APPROVAL,
+    LEAD_SCORER,
+    ROUTE_END,
+    SALES_AGENT,
+    TOOL_EXECUTOR,
+)
+from ai_sales.nodes.routing import (
+    route_after_agent,
+    route_after_scoring,
+    route_after_summarizer,
+)
 
 
 def _state(**kwargs) -> dict:
@@ -20,7 +31,9 @@ def _state(**kwargs) -> dict:
 
 
 def test_route_after_agent_with_tool_calls():
-    msg = AIMessage(content="", tool_calls=[{"name": "search_inventory", "args": {}, "id": "1"}])
+    msg = AIMessage(
+        content="", tool_calls=[{"name": "search_inventory", "args": {}, "id": "1"}]
+    )
     state = _state(messages=[msg])
     assert route_after_agent(state) == TOOL_EXECUTOR
 
@@ -32,7 +45,9 @@ def test_route_after_agent_without_tool_calls():
 
 
 def test_route_after_agent_max_iterations_forces_scoring():
-    msg = AIMessage(content="", tool_calls=[{"name": "search_inventory", "args": {}, "id": "1"}])
+    msg = AIMessage(
+        content="", tool_calls=[{"name": "search_inventory", "args": {}, "id": "1"}]
+    )
     state = _state(messages=[msg], tool_iterations=10)
     assert route_after_agent(state) == LEAD_SCORER
 

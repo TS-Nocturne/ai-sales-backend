@@ -84,7 +84,9 @@ def _print_status(graph, thread: dict) -> None:
     print(f"  สถานะไปป์ไลน์:   {values.get('pipeline_stage', 'N/A')}")
     pending = values.get("pending_discount_approval", {})
     if pending:
-        print(f"  รอการอนุมัติส่วนลด: {pending.get('discount_pct', 0)}% สำหรับ {pending.get('product', 'N/A')}")
+        print(
+            f"  รอการอนุมัติส่วนลด: {pending.get('discount_pct', 0)}% สำหรับ {pending.get('product', 'N/A')}"
+        )
     print(f"  โหนดถัดไป:       {state.next}")
     print()
 
@@ -133,7 +135,11 @@ def run_chat(thread_id: str | None = None) -> None:
                 _print_status(graph, thread)
                 continue
 
-            if lower in ("approve", "reject") and state.next and HUMAN_APPROVAL in state.next:
+            if (
+                lower in ("approve", "reject")
+                and state.next
+                and HUMAN_APPROVAL in state.next
+            ):
                 approved = lower == "approve"
                 msg_count_before = _message_count(graph, thread)
                 graph.update_state(thread, {"discount_approved": approved})
@@ -158,7 +164,9 @@ def run_chat(thread_id: str | None = None) -> None:
             if state.next and HUMAN_APPROVAL in state.next:
                 pending = state.values.get("pending_discount_approval", {})
                 print("\n  [!] กำลังรอการอนุมัติจากผู้จัดการ")
-                print(f"      พิมพ์ 'approve' หรือ 'reject' (ส่วนลด: {pending.get('discount_pct', 0)}%)")
+                print(
+                    f"      พิมพ์ 'approve' หรือ 'reject' (ส่วนลด: {pending.get('discount_pct', 0)}%)"
+                )
 
 
 if __name__ == "__main__":

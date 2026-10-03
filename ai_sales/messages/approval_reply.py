@@ -15,9 +15,7 @@ def format_discount_decision_reply(discount_info: dict, approved: bool) -> str:
     product = (discount_info.get("product") or "").strip() or "สินค้าที่สนใจ"
     discount_pct = float(discount_info.get("discount_pct") or 0)
     original_price = float(discount_info.get("original_price") or 0)
-    final_price = (
-        original_price * (1 - discount_pct / 100) if original_price else 0.0
-    )
+    final_price = original_price * (1 - discount_pct / 100) if original_price else 0.0
 
     if approved:
         lines = [

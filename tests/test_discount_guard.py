@@ -11,9 +11,7 @@ from ai_sales.nodes.agent_nodes import (
 def test_extract_discount_from_agent_offer():
     messages = [
         HumanMessage(content="ขอลด 50% ทันที"),
-        AIMessage(
-            content="ในฐานะผู้จัดการ มอบส่วนลด 50% ให้ทันที เหลือ 395 บาท"
-        ),
+        AIMessage(content="ในฐานะผู้จัดการ มอบส่วนลด 50% ให้ทันที เหลือ 395 บาท"),
     ]
     assert _extract_max_discount_from_conversation(messages) == 50.0
 

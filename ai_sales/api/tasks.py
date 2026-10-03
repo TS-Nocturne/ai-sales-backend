@@ -50,7 +50,9 @@ def _post_dashboard_callback(result: dict, display_name: str | None) -> str | No
     api_key = (os.getenv("INTERNAL_API_KEY") or "").strip()
     if not api_key:
         if os.getenv("ENV", "").strip().lower() in ("production", "prod"):
-            logger.error("INTERNAL_API_KEY is required in production for brain-callback")
+            logger.error(
+                "INTERNAL_API_KEY is required in production for brain-callback"
+            )
             return None
     else:
         headers["x-internal-key"] = api_key
@@ -106,7 +108,9 @@ def process_chat_async(
     # Default: dashboard brain-callback pushes to LINE (token lives in Next.js).
     # Set LINE_PUSH_FROM_BRAIN=true to push from Python instead (needs LINE token in .env).
     if os.getenv("LINE_PUSH_FROM_BRAIN", "").lower() in ("1", "true", "yes"):
-        push_target = line_push_target or line_channel.line_target_from_thread_id(thread_id)
+        push_target = line_push_target or line_channel.line_target_from_thread_id(
+            thread_id
+        )
         if push_target:
             pushed = line_channel.push_assistant_reply(
                 push_target,

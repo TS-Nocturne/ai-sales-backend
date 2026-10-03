@@ -139,7 +139,11 @@ def _latest_catalog_price(messages: list) -> dict | None:
         if not isinstance(msg, ToolMessage):
             continue
         text = _message_text(msg.content)
-        if "[Catalog]" not in text and "[Vector Search]" not in text and "[Keyword Fallback]" not in text:
+        if (
+            "[Catalog]" not in text
+            and "[Vector Search]" not in text
+            and "[Keyword Fallback]" not in text
+        ):
             continue
 
         for line in text.splitlines():
