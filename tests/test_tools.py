@@ -1,6 +1,10 @@
 """Tests for sales tools."""
 
-from ai_sales.tools.sales_tools import calculate_discount, list_products, search_knowledge_base
+from ai_sales.tools.sales_tools import (
+    calculate_discount,
+    list_products,
+    search_knowledge_base,
+)
 
 
 def test_search_knowledge_base_finds_iphone_case():
@@ -42,9 +46,7 @@ def test_search_knowledge_base_max_price_filter(monkeypatch):
     import ai_sales.tools.sales_tools as sales_tools
 
     monkeypatch.setattr(sales_tools, "_search_pinecone", lambda query, top_k=5: None)
-    result = search_knowledge_base.invoke(
-        {"query": "สายชาร์จ", "max_price": 400}
-    )
+    result = search_knowledge_base.invoke({"query": "สายชาร์จ", "max_price": 400})
     assert "350" in result or "P004" in result
     assert "1290" not in result
     assert "งบไม่เกิน" in result
@@ -69,11 +71,11 @@ def test_search_knowledge_base_broad_browse_catalog_fallback(monkeypatch):
     import ai_sales.tools.sales_tools as sales_tools
 
     monkeypatch.setattr(sales_tools, "_search_pinecone", lambda query, top_k=5: None)
-    monkeypatch.setattr(sales_tools, "_search_in_memory", lambda query: [])
+    monkeypatch.setattr(sales_tools, "_search_in_memory", lambda query, limit=5: [])
     result = search_knowledge_base.invoke({"query": "สินค้าแนะนำ"})
     assert "[Catalog Fallback]" in result
     assert "No relevant information found" not in result
-    assert "Product]" in result or "P001" in result
+    assert "ราคา" in result and "บาท" in result
 
 
 def test_catalog_browse_fallback_respects_max_price():

@@ -54,7 +54,11 @@ def strip_line_qr_tags(text: str) -> str:
 
 
 def extract_line_qr_urls(text: str) -> list[str]:
-    return [m.group(1).strip() for m in LINE_QR_TAG_RE.finditer(text or "") if m.group(1).strip()]
+    return [
+        m.group(1).strip()
+        for m in LINE_QR_TAG_RE.finditer(text or "")
+        if m.group(1).strip()
+    ]
 
 
 def build_line_messages(
@@ -82,7 +86,9 @@ def build_line_messages(
                 "previewImageUrl": img_url,
             }
         )
-    elif payment_qr and (payment_qr.get("use_static") or payment_qr.get("image_base64")):
+    elif payment_qr and (
+        payment_qr.get("use_static") or payment_qr.get("image_base64")
+    ):
         print(
             "[LINE] มี payment_qr แต่ resolve URL ไม่ได้ — "
             "ตั้ง PUBLIC_APP_URL เป็น HTTPS (เช่น ngrok) แล้วลองใหม่"

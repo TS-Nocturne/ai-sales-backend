@@ -12,7 +12,9 @@ from ai_sales.nodes.agent_nodes import (
 def test_render_for_summary_includes_tool_results():
     messages = [
         HumanMessage(content="มีเคส iPhone 15 ไหม"),
-        AIMessage(content="", tool_calls=[{"name": "search_products", "args": {}, "id": "1"}]),
+        AIMessage(
+            content="", tool_calls=[{"name": "search_products", "args": {}, "id": "1"}]
+        ),
         ToolMessage(
             content='[{"name": "เคส iPhone 15", "price": 490}]',
             tool_call_id="1",
@@ -27,7 +29,9 @@ def test_render_for_summary_includes_tool_results():
 
 def test_render_for_summary_skips_tool_call_only_ai_messages():
     messages = [
-        AIMessage(content="", tool_calls=[{"name": "search_products", "args": {}, "id": "1"}]),
+        AIMessage(
+            content="", tool_calls=[{"name": "search_products", "args": {}, "id": "1"}]
+        ),
         ToolMessage(content="no results", tool_call_id="1"),
     ]
     transcript = _render_for_summary(messages)

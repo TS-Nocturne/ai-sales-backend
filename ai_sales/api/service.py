@@ -20,9 +20,9 @@ import logging
 import os
 import re
 import threading
-from psycopg_pool import ConnectionPool
 
 from langchain_core.messages import AIMessage, HumanMessage
+from psycopg_pool import ConnectionPool
 
 from ai_sales.api.retry import invoke_with_retry, is_retryable_error
 from ai_sales.channels import line_delivery
@@ -237,11 +237,13 @@ def _snapshot(graph, thread: dict) -> dict:
         "next_nodes": list(state.next) if state.next else [],
         "shipping_info": values.get("shipping_info") or None,
         "order_ready": bool(values.get("order_ready", False)),
-        "payment_qr": payment_qr
-        if payment_qr.get("image_base64")
-        or payment_qr.get("use_static")
-        or payment_qr.get("static_url")
-        else None,
+        "payment_qr": (
+            payment_qr
+            if payment_qr.get("image_base64")
+            or payment_qr.get("use_static")
+            or payment_qr.get("static_url")
+            else None
+        ),
         "pending_overpay": values.get("pending_overpay") or None,
         "overpay_resolution": values.get("overpay_resolution") or None,
         "overpay_credit_amount": values.get("overpay_credit_amount") or 0,
@@ -290,7 +292,9 @@ def send_message(
             existing = graph.get_state(thread).values
             summary = (existing.get("conversation_summary") or "").strip()
         payload["catalog_prefetch"] = (
-            "" if looks_like_handoff_intent(message) else build_catalog_prefetch(message, summary)
+            ""
+            if looks_like_handoff_intent(message)
+            else build_catalog_prefetch(message, summary)
         )
 
         def _run() -> None:

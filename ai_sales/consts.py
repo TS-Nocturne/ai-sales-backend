@@ -35,7 +35,6 @@ SUMMARY_TRIGGER_COUNT = 16
 SUMMARY_KEEP_RECENT = 8
 
 
-
 # Pipeline stages
 STAGE_NEW = "new"
 STAGE_QUALIFIED = "qualified"

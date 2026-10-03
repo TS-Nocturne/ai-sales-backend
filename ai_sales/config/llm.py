@@ -2,10 +2,10 @@
 LLM configuration and initialization for the AI Sales Agent.
 
 Handles:
-- Environment variable loading (AGENTS.md: Always run load_dotenv() at the top)
+- Environment variable loading (load_dotenv() runs at import)
 - Lazy LLM instantiation to avoid import-time crashes
 - API key resolution: supports both GOOGLE_API_KEY and GEMINI_API_KEY
-- Tool binding (AGENTS.md: Run llm.bind_tools(tools) before invoking)
+- Tool binding (bind_tools() before invoking)
 """
 
 import os
@@ -13,7 +13,7 @@ import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# AGENTS.md: Always run load_dotenv() at the top
+# Load .env before any key lookup
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -65,8 +65,6 @@ _TOOL_LLM_TEMPERATURE = 0.1
 
 def get_llm_with_tools(tools: list):
     """Return the (low-temperature) LLM with tools bound.
-
-    AGENTS.md: Run llm.bind_tools(tools) before invoking.
 
     Args:
         tools: List of @tool-decorated functions to bind.

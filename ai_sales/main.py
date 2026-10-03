@@ -7,7 +7,7 @@ Demonstrates the full Human-in-the-Loop (HITL) workflow:
 3. Update the state as a human manager (using graph.update_state)
 4. Resume the graph (graph.invoke(None, thread))
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Always include a thread_id when invoking a persisted graph.
 - To resume from an interrupt, inject via graph.update_state() then graph.invoke(None, thread).
 """
@@ -17,7 +17,7 @@ import sys
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-# AGENTS.md: Always run load_dotenv() at the top
+# Load .env before importing modules that read credentials
 load_dotenv()
 
 from ai_sales.consts import HUMAN_APPROVAL
@@ -70,7 +70,7 @@ def print_messages(messages: list) -> None:
         # Truncate very long messages
         if len(content) > 500:
             content = content[:500] + "..."
-            
+
         print(f"\n  {role}:")
         for line in content.split("\n"):
             print(f"    {line}")
@@ -98,7 +98,7 @@ def run_demo():
     print("  กำลังสร้างกราฟพร้อมการบันทึกข้อมูล PostgresSaver (Neon)...")
 
     with graph_runtime() as graph:
-        # AGENTS.md: Always include a thread_id when invoking a persisted graph
+        # A thread_id is required when invoking a persisted graph
         thread = {"configurable": {"thread_id": "demo-customer-001"}}
         # ==================================================================
         # STEP 1: Customer asks about products

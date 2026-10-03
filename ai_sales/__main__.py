@@ -24,9 +24,15 @@ def main() -> None:
         "serve",
         help="เปิดเซิร์ฟเวอร์ FastAPI ให้ Next.js เรียกใช้ผ่าน HTTP",
     )
-    serve_parser.add_argument("--host", default="127.0.0.1", help="โฮสต์ (ค่าเริ่มต้น 127.0.0.1)")
-    serve_parser.add_argument("--port", type=int, default=8000, help="พอร์ต (ค่าเริ่มต้น 8000)")
-    serve_parser.add_argument("--reload", action="store_true", help="รีโหลดอัตโนมัติขณะพัฒนา")
+    serve_parser.add_argument(
+        "--host", default="127.0.0.1", help="โฮสต์ (ค่าเริ่มต้น 127.0.0.1)"
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=8000, help="พอร์ต (ค่าเริ่มต้น 8000)"
+    )
+    serve_parser.add_argument(
+        "--reload", action="store_true", help="รีโหลดอัตโนมัติขณะพัฒนา"
+    )
 
     args = parser.parse_args()
 

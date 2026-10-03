@@ -26,6 +26,4 @@ class ShippingInfo(BaseModel):
             "ที่อยู่จัดส่งแบบเต็ม (บ้านเลขที่ ซอย ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)"
         ),
     )
-    postal_code: str = Field(
-        default="", description="รหัสไปรษณีย์ 5 หลัก (ถ้าทราบ)"
-    )
+    postal_code: str = Field(default="", description="รหัสไปรษณีย์ 5 หลัก (ถ้าทราบ)")

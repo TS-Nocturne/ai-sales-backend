@@ -1,7 +1,7 @@
 """
 LangGraph StateGraph construction for the AI Sales Agent.
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Use StateGraph with SalesState schema.
 - Set entry point with workflow.set_entry_point().
 - Enable memory with PostgresSaver (Neon pooled DATABASE_URL).
@@ -9,8 +9,9 @@ Follows AGENTS.md guidelines:
 - Always include a thread_id in configuration.
 """
 
-from dotenv import load_dotenv
 import logging
+
+from dotenv import load_dotenv
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, StateGraph
 
@@ -33,7 +34,11 @@ from ai_sales.nodes.agent_nodes import (
     sales_agent_node,
     tool_executor_node,
 )
-from ai_sales.nodes.routing import route_after_agent, route_after_scoring, route_after_summarizer
+from ai_sales.nodes.routing import (
+    route_after_agent,
+    route_after_scoring,
+    route_after_summarizer,
+)
 from ai_sales.state import SalesState
 
 # Load environment variables

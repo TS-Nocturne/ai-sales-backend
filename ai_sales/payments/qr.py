@@ -56,7 +56,9 @@ def create_static_store_qr(amount: float, items: str = "") -> dict:
     }
 
 
-def create_promptpay_qr(amount: float, items: str = "", *, partial: bool = False) -> dict:
+def create_promptpay_qr(
+    amount: float, items: str = "", *, partial: bool = False
+) -> dict:
     """Generate payment QR data — static store image (full) or dynamic (partial top-up)."""
     if amount <= 0:
         raise slip2go.Slip2GoError("ยอดชำระเงินต้องมากกว่า 0 บาท")
