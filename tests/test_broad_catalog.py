@@ -1,6 +1,6 @@
 """Tests for broad catalog intent detection."""
 
-from ai_sales.nodes.agent_nodes import (
+from ai_sales.heuristics import (
     _looks_like_broad_catalog_query,
     _looks_like_budget_browse_query,
     _looks_like_recommend_query,

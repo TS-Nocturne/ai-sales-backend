@@ -1,7 +1,7 @@
 """
 Node functions for the AI Sales Agent graph.
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Every node function returns a dict updating only the specific state keys it modified.
 - Use ToolNode(tools) from langgraph.prebuilt to handle tool execution automatically.
 """
@@ -38,6 +38,18 @@ from ai_sales.consts import (
     SUMMARY_KEEP_RECENT,
     SUMMARY_TRIGGER_COUNT,
 )
+from ai_sales.handoff import (
+    HANDOFF_REPLY,
+    handoff_reason_from_text,
+    looks_like_handoff_intent,
+)
+from ai_sales.heuristics import (
+    _CLOSING_INTENT,
+    _extract_budget_ceiling,
+    _looks_like_confused_reply,
+    _looks_like_search_filler,
+    _should_auto_browse_catalog,
+)
 from ai_sales.messages.approval_reply import format_discount_decision_reply
 from ai_sales.state import SalesState
 from ai_sales.tools.catalog import find_product_price
@@ -46,19 +58,17 @@ from ai_sales.tools.order_total import (
     looks_like_transfer_intent,
     should_auto_generate_qr,
 )
-from ai_sales.handoff import (
-    HANDOFF_REPLY,
-    handoff_reason_from_text,
-    looks_like_handoff_intent,
+from ai_sales.tools.sales_tools import (
+    _is_pure_catalog_browse,
+    all_tools,
+    transfer_payment_qr_update,
 )
-
-from ai_sales.tools.sales_tools import all_tools, _is_pure_catalog_browse, transfer_payment_qr_update
 
 logger = logging.getLogger(__name__)
 
 _MAX_TOOL_SUMMARY_CHARS = 900
 
-# ToolNode for automatic tool execution (AGENTS.md: Use ToolNode(tools))
+# ToolNode for automatic tool execution
 _base_tool_executor = ToolNode(all_tools)
 
 
@@ -78,114 +88,6 @@ def tool_executor_node(state: SalesState) -> dict | list:
     }
 
 
-# Phrases that signal the model is *announcing* a search instead of doing it.
-# When such a message arrives with NO tool call, the turn would end on filler,
-# so we force a real tool call (see sales_agent_node safety net).
-_SEARCH_FILLER_MARKERS = (
-    "ขอค้นหา",
-    "ขอเช็ก",
-    "ขอเช็ค",
-    "ขอตรวจสอบ",
-    "ขอดูข้อมูล",
-    "รอสักครู่",
-    "สักครู่นะ",
-    "เดี๋ยวเช็ก",
-    "เดี๋ยวเช็ค",
-    "กำลังค้นหา",
-    "กำลังตรวจสอบ",
-    "let me search",
-    "let me check",
-    "searching",
-    "checking",
-    "one moment",
-)
-
-
-def _looks_like_search_filler(text: str) -> bool:
-    """True when the text merely promises to search rather than answering."""
-    low = text.lower()
-    return any(marker.lower() in low for marker in _SEARCH_FILLER_MARKERS)
-
-
-_BROAD_CATALOG_MARKERS = (
-    "มีสินค้าอะไร",
-    "มีอะไรบ้าง",
-    "มีอะไรขาย",
-    "ขายอะไร",
-    "สินค้ามีอะไร",
-    "ดูสินค้า",
-    "แนะนำสินค้า",
-    "มีของอะไร",
-    "มีอะไรแนะนำ",
-    "แนะนำหน่อย",
-)
-
-_RECOMMEND_MARKERS = (
-    "มีรุ่นไหน",
-    "มีรุ่นใหน",
-    "รุ่นไหนบ้าง",
-    "รุ่นไหนแนะนำ",
-    "แนะนำบ้าง",
-    "มีอะไรแนะนำ",
-)
-
-_CLOSING_INTENT = re.compile(
-    r"(สนใจ|เอาอันนี้|เอาเลย|ต้องทำยังไง|สั่งยังไง|จะซื้อ|รับเลย|สั่งเลย|ซื้อยังไง)",
-    re.IGNORECASE,
-)
-
-_BUDGET_CEILING = re.compile(
-    r"(?:งบ(?:ประมาณ)?|budget|ไม่เกิน|ภายใน)\s*([\d,.]+)",
-    re.IGNORECASE,
-)
-
-_CONFUSED_REPLY_MARKERS = (
-    "ไม่แน่ใจ",
-    "ไม่เข้าใจ",
-    "ไม่ทราบว่า",
-)
-
-
-def _looks_like_broad_catalog_query(text: str) -> bool:
-    """True when the customer asks an open-ended what-do-you-sell question."""
-    compact = re.sub(r"\s+", "", (text or "").lower())
-    if not compact:
-        return False
-    return any(marker.replace(" ", "") in compact for marker in _BROAD_CATALOG_MARKERS)
-
-
-def _looks_like_recommend_query(text: str) -> bool:
-    """True when the customer asks which models/products to recommend."""
-    compact = re.sub(r"\s+", "", (text or "").lower())
-    if not compact:
-        return False
-    return any(marker.replace(" ", "") in compact for marker in _RECOMMEND_MARKERS)
-
-
-def _looks_like_budget_browse_query(text: str) -> bool:
-    """True for 'มีงบ X ซื้ออะไรได้บ้าง' style questions."""
-    compact = re.sub(r"\s+", "", (text or "").lower())
-    if not compact:
-        return False
-    has_budget = "งบ" in compact or "budget" in compact
-    has_browse = any(
-        w in compact for w in ("ซื้ออะไร", "ได้บ้าง", "แนะนำ", "อะไรได้")
-    )
-    return has_budget and has_browse
-
-
-def _extract_budget_ceiling(text: str) -> float:
-    match = _BUDGET_CEILING.search(text or "")
-    if not match:
-        return 0.0
-    raw = match.group(1).replace(",", "").strip()
-    try:
-        value = float(raw)
-    except ValueError:
-        return 0.0
-    return value if value > 0 else 0.0
-
-
 def _browse_already_satisfied(messages: list) -> bool:
     """True when catalog data was already fetched for the latest customer turn."""
     last_human_idx = None
@@ -198,22 +100,14 @@ def _browse_already_satisfied(messages: list) -> bool:
     for msg in messages[last_human_idx:]:
         if isinstance(msg, ToolMessage):
             text = _normalize_message_text(msg.content)
-            if "[Catalog]" in text or "[Vector Search]" in text or "[Catalog Fallback]" in text or "[หมวดหมู่สินค้า]" in text:
+            if (
+                "[Catalog]" in text
+                or "[Vector Search]" in text
+                or "[Catalog Fallback]" in text
+                or "[หมวดหมู่สินค้า]" in text
+            ):
                 return True
     return False
-
-
-def _should_auto_browse_catalog(text: str) -> bool:
-    """Browse intents that must never end in 'ไม่เข้าใจ' — route to list_products."""
-    if not text or looks_like_transfer_intent(text) or looks_like_cod_intent(text):
-        return False
-    if _CLOSING_INTENT.search(text):
-        return False
-    return (
-        _looks_like_broad_catalog_query(text)
-        or _looks_like_recommend_query(text)
-        or _looks_like_budget_browse_query(text)
-    )
 
 
 def _browse_display_mode(customer_text: str) -> str:
@@ -267,11 +161,6 @@ def _closing_context_hint(messages: list) -> str:
                 "(โอน PromptPay / เก็บปลายทาง COD)"
             )
     return ""
-
-
-def _looks_like_confused_reply(text: str) -> bool:
-    low = (text or "").lower()
-    return any(marker in low for marker in _CONFUSED_REPLY_MARKERS)
 
 
 # Internal bookkeeping messages (lead scoring / approval) that are written into
@@ -350,7 +239,9 @@ def _memory_context_for_agent(state: SalesState) -> str:
 
     pending = state.get("pending_discount_approval") or {}
     if isinstance(pending, dict) and pending:
-        blocks.append(f"ส่วนลดที่เสนอ/รออนุมัติ: {json.dumps(pending, ensure_ascii=False)}")
+        blocks.append(
+            f"ส่วนลดที่เสนอ/รออนุมัติ: {json.dumps(pending, ensure_ascii=False)}"
+        )
 
     score = state.get("lead_score")
     stage = state.get("pipeline_stage")
@@ -438,7 +329,7 @@ def handoff_node(state: SalesState) -> dict:
 def sales_agent_node(state: SalesState) -> dict:
     """Main sales agent node. Invokes the LLM with tools to handle customer interaction.
 
-    Returns only the updated messages key (AGENTS.md guideline).
+    Returns only the updated messages key.
     """
     last_customer = _last_customer_text(state["messages"])
 
@@ -479,7 +370,7 @@ def sales_agent_node(state: SalesState) -> dict:
     system_msg = SystemMessage(content=system_text)
     messages_with_system = [system_msg] + messages
 
-    # Invoke LLM with tools bound (AGENTS.md: Run llm.bind_tools before invoking)
+    # Invoke LLM with tools bound
     llm_with_tools = get_llm_with_tools(all_tools)
     response = llm_with_tools.invoke(messages_with_system)
 
@@ -521,9 +412,9 @@ def sales_agent_node(state: SalesState) -> dict:
                 if _should_auto_browse_catalog(last_customer):
                     response = _browse_catalog_tool_call(last_customer)
         elif not text.strip():
-            if _should_auto_browse_catalog(last_customer) and not _browse_already_satisfied(
-                state["messages"]
-            ):
+            if _should_auto_browse_catalog(
+                last_customer
+            ) and not _browse_already_satisfied(state["messages"]):
                 response = _browse_catalog_tool_call(last_customer)
             else:
                 # Never end the turn silently — an empty reply makes the channel

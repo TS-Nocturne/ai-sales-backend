@@ -102,6 +102,7 @@ ai_sales/
 ├── channels/        # LINE delivery
 ├── config/          # LLM, prompts, vectorstore
 ├── graph/           # StateGraph builder (PostgresSaver)
+├── heuristics.py    # Gemini workarounds (see below)
 ├── knowledge/       # Document indexing
 ├── nodes/           # Agent, scorer, HITL nodes
 ├── payments/        # Slip2Go, PromptPay QR
@@ -110,6 +111,24 @@ ai_sales/
 ├── cli.py           # Interactive chat
 └── main.py          # HITL demo
 ```
+
+## Why `heuristics.py` exists
+
+Gemini occasionally misbehaves in ways a prompt alone did not fix. Each helper
+in [`ai_sales/heuristics.py`](ai_sales/heuristics.py) patches one failure we saw
+in real LINE chats:
+
+| Symptom | Helper | What it does |
+| --- | --- | --- |
+| Model says "ขอค้นหาสักครู่นะคะ" but emits no tool call, so the turn ends on filler | `_looks_like_search_filler` | Detected in `sales_agent_node`, which re-invokes once and forces a tool call |
+| Vague questions ("มีอะไรขายบ้าง", "มีรุ่นไหนแนะนำ", "งบ 500 ซื้ออะไรได้") get "ไม่เข้าใจ" | `_should_auto_browse_catalog`, `_looks_like_confused_reply`, `_extract_budget_ceiling` | Route straight to `list_products`, with the budget as `max_price` |
+| Meta words ("รุ่น", "แนะนำ", "หน่อย") sent to vector search return nothing | `_normalize_search_query`, `_is_broad_browse_query` | Rewrite to a concrete keyword and fall back to the catalog |
+| Customer shows buying intent and the model restarts the conversation | `_CLOSING_INTENT` | Adds a one-turn hint to ask which offered item they want |
+
+These are plain marker lists and regexes with no I/O. They are deliberately
+blunt and Thai-specific. When a new quirk shows up, add a marker or helper
+there, with a test in `tests/`, instead of growing the nodes or tools modules.
+If the model improves and a helper stops firing, delete it.
 
 ## License
 

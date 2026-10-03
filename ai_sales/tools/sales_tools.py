@@ -1,15 +1,14 @@
 """
 Tool definitions for the AI Sales Agent.
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Decorate custom tools with @tool.
 - Always write a descriptive docstring so the LLM understands its exact purpose.
 """
 
 import logging
-from typing import Annotated, Optional
-
 import re
+from typing import Annotated, Optional
 
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
@@ -17,6 +16,7 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
+from ai_sales.channels import line_delivery
 from ai_sales.config.category_labels import category_label
 from ai_sales.consts import (
     LIST_PRODUCTS_DEFAULT_LIMIT,
@@ -25,7 +25,12 @@ from ai_sales.consts import (
     PRODUCT_DISPLAY_LIMIT,
     VECTOR_TOP_K,
 )
-from ai_sales.channels import line_delivery
+from ai_sales.heuristics import (
+    _is_broad_browse_query,
+    _is_pure_catalog_browse,
+    _normalize_search_query,
+    _tokenize_query,
+)
 from ai_sales.knowledge.technical_reference import format_technical_reference
 from ai_sales.payments import qr as payment_qr
 from ai_sales.payments import slip2go
@@ -35,27 +40,6 @@ from ai_sales.tools.order_total import resolve_order_from_messages
 logger = logging.getLogger(__name__)
 
 _CATALOG_FALLBACK_LIMIT = PRODUCT_DISPLAY_LIMIT
-
-_PURE_CATALOG_BROWSE_RE = re.compile(
-    r"มี(?:สินค้า)?อะไร(?:บ้าง|ขาย)|มีอะไรขาย|ขายอะไร|"
-    r"สินค้ามีอะไร|ดูสินค้า|มีของอะไร",
-    re.IGNORECASE,
-)
-
-_BROAD_BROWSE_QUERIES = frozenset(
-    {
-        "สินค้าแนะนำ",
-        "สินค้าทั้งหมด",
-        "สินค้ายอดนิยม",
-        "อุปกรณ์เสริมมือถือ",
-    }
-)
-
-_BROAD_BROWSE_RE = re.compile(
-    r"มี(?:อะไร|สินค้า).*(?:ขาย|บ้าง)|มีอะไรขาย|ขายอะไร|"
-    r"แนะนำ(?:สินค้า)?.*(?:หน่อย|บ้าง)|ซื้ออะไรได้|มีรุ่น(?:ไหน|ใหน)",
-    re.IGNORECASE,
-)
 
 
 class SearchKnowledgeBaseInput(BaseModel):
@@ -84,8 +68,7 @@ class ListProductsInput(BaseModel):
     category: str = Field(
         default="",
         description=(
-            "หมวดสินค้า เช่น 'เคส', 'สายชาร์จ', 'หูฟัง' — "
-            "ว่างถ้าต้องการดูทั้งร้าน"
+            "หมวดสินค้า เช่น 'เคส', 'สายชาร์จ', 'หูฟัง' — " "ว่างถ้าต้องการดูทั้งร้าน"
         ),
     )
     keyword: str = Field(
@@ -215,81 +198,6 @@ def _search_pinecone(query: str, top_k: int = VECTOR_TOP_K) -> list[dict] | None
         return None
 
 
-def _tokenize_query(query: str) -> list[str]:
-    """Split a search query into meaningful tokens (supports Thai + Latin)."""
-    query_lower = query.lower().strip()
-    if not query_lower:
-        return []
-    tokens = [t for t in re.split(r"[\s,./\-_]+", query_lower) if len(t) >= 2]
-    return tokens or [query_lower]
-
-
-_VAGUE_QUERY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"มีรุ่น.*(?:แนะนำ|บ้าง)|(?:แนะนำ|บ้าง).*รุ่น|มีรุ่นไหน|รุ่นไหนบ้าง",
-            re.I,
-        ),
-        "สินค้าแนะนำ",
-    ),
-    (
-        re.compile(
-            r"แนะนำ.*(?:หน่อย|บ้าง)|มีอะไร(?:ขาย|บ้าง)|มีสินค้าอะไร|ขายอะไร",
-            re.I,
-        ),
-        "สินค้าแนะนำ",
-    ),
-    (
-        re.compile(r"ซื้ออะไรได้|งบ.*ซื้อ|ในงบ", re.I),
-        "สินค้าแนะนำ",
-    ),
-)
-
-_META_ONLY_WORDS = frozenset(
-    {
-        "รุ่น",
-        "แนะนำ",
-        "บ้าง",
-        "หน่อย",
-        "มี",
-        "อะไร",
-        "ขาย",
-        "สินค้า",
-        "ให้",
-        "ครับ",
-        "ค่ะ",
-        "นะ",
-        "คะ",
-        "ได้",
-        "ซื้อ",
-        "งบ",
-        "ไหน",
-        "ใหน",
-    }
-)
-
-
-def _normalize_search_query(query: str) -> str:
-    """Rewrite vague/meta customer phrases into concrete vector-search keywords."""
-    q = (query or "").strip()
-    if not q:
-        return q
-    for pattern, replacement in _VAGUE_QUERY_PATTERNS:
-        if pattern.search(q):
-            return replacement
-    tokens = _tokenize_query(q)
-    if tokens and all(token in _META_ONLY_WORDS for token in tokens):
-        return "สินค้าแนะนำ"
-    if len(q) <= 12 and tokens == ["รุ่น"]:
-        return "สินค้าแนะนำ"
-    return q
-
-
-def _is_pure_catalog_browse(text: str) -> bool:
-    """True for 'what do you sell' — route to category overview, not product dump."""
-    return bool(_PURE_CATALOG_BROWSE_RE.search((text or "").strip()))
-
-
 def _clamp_limit(limit: int) -> int:
     try:
         value = int(limit)
@@ -310,7 +218,9 @@ def _catalog_categories() -> list[dict]:
         for product in get_product_catalog():
             cat = str(product.get("category", "")).strip() or "อื่นๆ"
             counts[cat] = counts.get(cat, 0) + 1
-    return [{"category": name, "count": count} for name, count in sorted(counts.items())]
+    return [
+        {"category": name, "count": count} for name, count in sorted(counts.items())
+    ]
 
 
 def _format_category_label(raw: str) -> str:
@@ -350,23 +260,6 @@ def _cap_product_results(results: list[dict], limit: int | None = None) -> list[
         else results
     )
     return products[:cap]
-
-
-def _is_broad_browse_query(query: str, *, raw_query: str | None = None) -> bool:
-    """True when the query is a vague browse intent (not a specific product lookup)."""
-    for candidate in (raw_query, query):
-        if not candidate or not str(candidate).strip():
-            continue
-        text = str(candidate).strip()
-        if _BROAD_BROWSE_RE.search(text):
-            return True
-        normalized = _normalize_search_query(text)
-        compact = re.sub(r"\s+", "", normalized.lower())
-        if any(
-            re.sub(r"\s+", "", key.lower()) == compact for key in _BROAD_BROWSE_QUERIES
-        ):
-            return True
-    return False
 
 
 def _product_hits(results: list[dict]) -> list[dict]:
@@ -442,8 +335,7 @@ def _search_in_memory(query: str, limit: int = PRODUCT_DISPLAY_LIMIT) -> list[di
     catalog = get_product_catalog()
     for product in catalog:
         searchable = (
-            f"{product['name']} {product['category']} "
-            f"{product['description']}"
+            f"{product['name']} {product['category']} " f"{product['description']}"
         ).lower()
         matched = query_lower in searchable or any(
             token in searchable for token in tokens
@@ -492,7 +384,7 @@ def _format_search_results(results: list[dict], *, compact: bool = False) -> str
             )
         else:
             lines.append(f"[Unknown] {r.get('text', 'N/A')}")
-            
+
     return "\n\n".join(lines)
 
 
@@ -586,9 +478,7 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
     memory_results = _filter_results_by_max_price(memory_results, budget_cap)
 
     if memory_results:
-        logger.info(
-            "search_knowledge_base hit keyword count=%s", len(memory_results)
-        )
+        logger.info("search_knowledge_base hit keyword count=%s", len(memory_results))
         header = (
             f"[Keyword Fallback] Found {len(memory_results)} product(s) "
             f"matching '{query}'{budget_note} (FAQ not available offline):\n\n"
@@ -605,11 +495,11 @@ def search_knowledge_base(query: str, max_price: float | None = None) -> str:
             )
             return _format_catalog_fallback_response(fallback, query, budget_note)
 
-    technical = format_technical_reference(raw_query) or format_technical_reference(query)
+    technical = format_technical_reference(raw_query) or format_technical_reference(
+        query
+    )
     if technical:
-        logger.info(
-            "search_knowledge_base technical reference query=%r", query
-        )
+        logger.info("search_knowledge_base technical reference query=%r", query)
         return technical
 
     logger.info("search_knowledge_base miss query=%r max_price=%s", query, max_price)
@@ -733,7 +623,9 @@ def list_products(
     if min_price > 0 and max_price > 0 and min_price == max_price:
         min_price = 0
 
-    open_browse = not cat and not kw and not min_price and not max_price and not sort_by_price
+    open_browse = (
+        not cat and not kw and not min_price and not max_price and not sort_by_price
+    )
     if open_browse:
         if mode == "categories":
             categories = _catalog_categories()
@@ -744,8 +636,7 @@ def list_products(
         )
         if fallback:
             lines = [
-                "[Catalog] สินค้าแนะนำจากคลังสด "
-                f"({len(fallback)} รายการ):",
+                "[Catalog] สินค้าแนะนำจากคลังสด " f"({len(fallback)} รายการ):",
             ]
             lines.extend(_format_product_compact(p) for p in fallback)
             lines.append(
