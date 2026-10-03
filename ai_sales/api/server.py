@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
-# AGENTS.md: Always run load_dotenv() at the top so credentials are available.
+# Load .env before importing modules that read credentials at import time.
 load_dotenv()
 
 import base64
@@ -42,8 +42,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ai_sales.api import service
-from ai_sales.api import tasks
+from ai_sales.api import service, tasks
 from ai_sales.api.retry import is_retryable_error
 from ai_sales.knowledge import indexer
 from ai_sales.payments import qr as payment_qr_module
@@ -180,9 +179,7 @@ class PromptPayQRRequest(BaseModel):
     """Parameters to generate a PromptPay QR for receiving payment."""
 
     prompt_pay_code: str = Field(..., min_length=1, description="PromptPay id")
-    prompt_pay_type: Literal["phone_number", "citizen_id", "e_wallet"] = (
-        "phone_number"
-    )
+    prompt_pay_type: Literal["phone_number", "citizen_id", "e_wallet"] = "phone_number"
     account_name: str | None = Field(None, description="Receiver display name")
     amount: float | None = Field(None, description="Amount in THB (optional)")
 
@@ -200,7 +197,9 @@ class KnowledgeIndexFileRequest(BaseModel):
 
     document_id: str = Field(..., min_length=1)
     title: str = Field("", description="Document title")
-    filename: str = Field(..., min_length=1, description="Original filename (for type detection)")
+    filename: str = Field(
+        ..., min_length=1, description="Original filename (for type detection)"
+    )
     content_base64: str = Field(..., min_length=1, description="File bytes as Base64")
 
 

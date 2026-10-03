@@ -1,7 +1,7 @@
 """
 State schema for the AI Sales & Lead Scoring Agent.
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Uses MessagesState as the base (provides messages: Annotated[list, add_messages]).
 - Scalar fields use overwrite semantics (no Annotated wrapper needed).
 """
@@ -31,7 +31,9 @@ class SalesState(MessagesState):
     discount_approved: bool
     tool_iterations: int
     # Order / fulfillment
-    shipping_info: dict  # {customer_name, phone, address, postal_code, payment_method, ...}
+    shipping_info: (
+        dict  # {customer_name, phone, address, postal_code, payment_method, ...}
+    )
     order_ready: bool  # True once save_shipping_info has captured a complete address
     # One-shot PromptPay QR generated this turn (for LINE image push)
     payment_qr: dict  # {amount, account_name, image_base64, use_static, ...} or {}

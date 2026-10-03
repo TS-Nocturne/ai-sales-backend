@@ -1,7 +1,7 @@
 """
 Routing functions for conditional edges in the sales agent graph.
 
-Follows AGENTS.md guidelines:
+Design notes:
 - Check state["messages"][-1].tool_calls in conditional routing
   to decide if the graph should transition to an action node or END.
 """
@@ -29,7 +29,7 @@ def route_after_summarizer(state: SalesState) -> str:
 def route_after_agent(state: SalesState) -> str:
     """Conditional routing after the sales agent node.
 
-    AGENTS.md: Check state["messages"][-1].tool_calls to decide
+    Check state["messages"][-1].tool_calls to decide
     if the graph should transition to the tool executor or lead scorer.
     """
     last_message = state["messages"][-1]
