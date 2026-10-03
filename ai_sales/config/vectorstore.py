@@ -28,8 +28,7 @@ def _resolve_pinecone_api_key() -> str:
     key = os.getenv("PINECONE_API_KEY")
     if not key:
         raise ValueError(
-            "No Pinecone API key found. "
-            "Set PINECONE_API_KEY in your .env file."
+            "No Pinecone API key found. " "Set PINECONE_API_KEY in your .env file."
         )
     return key
 
@@ -86,9 +85,10 @@ def get_pinecone_index():
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
-            
+
             # Wait for the index to be ready
             import time
+
             while not pc.describe_index(index_name).status["ready"]:
                 time.sleep(5)
 

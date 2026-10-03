@@ -23,7 +23,10 @@ def test_latest_reply_after_last_human_survives_synthetic_shrink():
     ]
     # Old bug: since=12 on a 2-message list returned empty.
     assert _latest_reply(messages, since=12) == ""
-    assert _latest_reply_after_last_human(messages) == "สวัสดีค่ะ มีเคส iPhone 15 ให้เลือกค่ะ"
+    assert (
+        _latest_reply_after_last_human(messages)
+        == "สวัสดีค่ะ มีเคส iPhone 15 ให้เลือกค่ะ"
+    )
 
 
 def test_latest_reply_after_last_human_skips_internal_scoring():
