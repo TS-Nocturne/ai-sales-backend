@@ -1,5 +1,7 @@
 """Tests for PromptPay / Slip2Go configuration normalization."""
 
+import os
+
 import pytest
 
 from ai_sales.payments import slip2go
@@ -24,6 +26,10 @@ def test_build_check_condition_uses_type_number_schema():
     assert "accountType" not in receivers[0]
 
 
+@pytest.mark.skipif(
+    not os.getenv("SLIP_VERIFY_SECRET"),
+    reason="needs SLIP_VERIFY_SECRET (calls the live Slip2Go API)",
+)
 def test_verify_with_receiver_schema_accepted_by_api():
     """Regression: accountType/accountNumber caused HTTP 400 from Slip2Go."""
     tiny = (
